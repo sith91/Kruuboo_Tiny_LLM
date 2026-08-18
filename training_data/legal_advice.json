@@ -1,0 +1,32 @@
+[
+  {
+    "topic": "Non-Disclosure Agreement (NDA)",
+    "question": "What is an NDA and what must it contain?",
+    "advice": "A Non-Disclosure Agreement (NDA) is a legally binding contract that establishes a confidential relationship. A standard NDA must define what constitutes confidential information, state the exclusions from confidentiality, define the obligations of the receiving party, and clearly specify the duration or term of the agreement."
+  },
+  {
+    "topic": "Intellectual Property (IP)",
+    "question": "Who owns intellectual property created during employment?",
+    "advice": "Generally, any intellectual property created by an employee in the course of their normal employment duties is automatically owned by the employer under the 'work-for-hire' doctrine. However, it is highly recommended to have a signed Proprietary Information and Inventions Agreement (PIIA) to clarify and secure these ownership rights."
+  },
+  {
+    "topic": "Employment Contract",
+    "question": "What is 'at-will' employment?",
+    "advice": "'At-will' employment means that either the employer or the employee can terminate the employment relationship at any time, for any lawful reason or no reason at all, with or without prior notice. Terminations cannot be based on discrimination or in violation of public policy."
+  },
+  {
+    "topic": "Wills and Trusts",
+    "question": "What is the difference between a Will and a Living Trust?",
+    "advice": "A Will is a legal document that states your wishes regarding the distribution of your assets and the care of any minor children after your death. It goes through probate. A Living Trust is an entity created during your lifetime that holds your assets, bypasses probate entirely, and allows for immediate distribution of assets after death."
+  },
+  {
+    "topic": "Rental Agreements",
+    "question": "What are a landlord's key obligations?",
+    "advice": "A landlord has a legal obligation under the 'implied warranty of habitability' to keep the rental property fit for human occupation. This includes maintaining structural safety (roofs, walls), providing functional utilities (plumbing, heating, electricity), and keeping the premises clean and safe from hazards."
+  },
+  {
+    "topic": "Contract Breach",
+    "question": "What remedies are available for a breach of contract?",
+    "advice": "Remedies for breach of contract include compensatory damages (monetary compensation for loss incurred), specific performance (a court order forcing the breaching party to complete their contract duties), and rescission or cancellation of the contract with restitution."
+  }
+]

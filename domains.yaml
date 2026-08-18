@@ -1,0 +1,64 @@
+# Domain configuration file
+# This allows dynamic domain management without code changes
+
+enabled_domains:
+  - teaching_abc
+  - product_pricing
+  - medical
+  - legal
+  - general
+  - teaching_math
+  - sinhala_news
+  - survival
+
+domains:
+  teaching_abc:
+    auto_detect_threshold: 0.3
+    priority: 1
+    enabled: true
+  teaching_math:
+    auto_detect_threshold: 0.3
+    priority: 5
+    enabled: true
+    custom_keywords:
+      - alphabet
+      - phonics
+      - reading
+    
+  product_pricing:
+    auto_detect_threshold: 0.4
+    priority: 2
+    enabled: true
+    custom_keywords:
+      - shopping
+      - best buy
+      - amazon
+    
+  medical:
+    auto_detect_threshold: 0.5
+    priority: 3
+    enabled: true  # Enabled for home remedies
+    custom_keywords: ["remedy", "cure", "cough", "cold", "burn", "ache"]
+    require_disclaimer: true
+    
+  legal:
+    auto_detect_threshold: 0.5
+    priority: 4
+    enabled: true
+    custom_keywords: ["nda", "contract", "law", "will", "trust", "agreement", "legal"]
+    require_disclaimer: true
+    
+  survival:
+    auto_detect_threshold: 0.5
+    priority: 6
+    enabled: true
+    custom_keywords: ["survival", "lost", "shelter", "fire", "distress", "signal", "bite"]
+    
+  general:
+    auto_detect_threshold: 0.0
+    priority: 999  # Lowest priority (fallback)
+    enabled: true
+    custom_keywords: []
+
+# Custom domains can be added dynamically
+custom_domains: {}

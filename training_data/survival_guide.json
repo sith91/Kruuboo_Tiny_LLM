@@ -1,0 +1,32 @@
+[
+  {
+    "topic": "Finding Water",
+    "situation": "Lost in the wilderness without drinking water.",
+    "instructions": "Locate water by looking for green vegetation, following animal tracks, or listening for flowing streams. Rainwater, snow, and dew are generally safe to collect. Always boil surface water for at least 1 minute (or 3 minutes at high altitudes) to kill pathogens before drinking."
+  },
+  {
+    "topic": "Building Shelter",
+    "situation": "Exposed to extreme cold, wind, or rain.",
+    "instructions": "Build a simple lean-to shelter by finding a sturdy fallen log or low branch. Lean long branches against it at a 45-degree angle to form a wall. Cover the frame with leaves, pine needles, or brush to insulate it and shed rainwater. Pile dry leaves on the ground inside for bedding."
+  },
+  {
+    "topic": "Starting a Fire",
+    "situation": "Need heat, light, or signaling capabilities.",
+    "instructions": "Collect three types of fuel: tinder (dry leaves, birch bark, lint), kindling (small twigs, pine cones), and fuel logs. Arrange kindling in a teepee shape over the tinder. Ignite using matches, a lighter, or spark from a ferro rod. Gently blow on the embers to feed oxygen to the flame."
+  },
+  {
+    "topic": "Wilderness First Aid - Snake Bite",
+    "situation": "Bitten by a potentially venomous snake.",
+    "instructions": "Keep the victim calm and still to slow the spread of venom. Immobilize the bitten limb and keep it at or slightly below heart level. Wash the bite area gently with soap and water. Never cut the wound, attempt to suck out venom, or apply a tourniquet or ice."
+  },
+  {
+    "topic": "Signaling for Help",
+    "situation": "Attempting to alert rescue search parties.",
+    "instructions": "Create a signal fire using green leaves or pine needles on top of an established fire to generate thick white smoke during the day. Use three of any signal (e.g., 3 loud whistle blows, 3 gunshots, or 3 mirror flashes) which is the universal international distress signal."
+  },
+  {
+    "topic": "Navigating without a Compass",
+    "situation": "Lost direction in the wilderness.",
+    "instructions": "Use the shadow stick method: place a stick vertically in the ground and mark the tip of its shadow with a stone (West). Wait 15-20 minutes and mark the new shadow tip with another stone (East). Draw a line between the two stones to establish the West-to-East baseline."
+  }
+]
