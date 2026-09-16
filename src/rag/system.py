@@ -22,6 +22,7 @@ from .search import hybrid_search
 from ..tokenizer import TinyTokenizer
 from ..inference import InferenceEngine
 from ..web_researcher import WebResearcher
+from ..rstar import RStarEngine
 
 # Load global configuration
 try:
@@ -114,6 +115,80 @@ class RAGSystem:
             self._encoder = SentenceTransformer(self.embedding_model_name)
         return self._encoder
 
+    def _resolve_query_context(self, question: str, history: Optional[List[Dict]]) -> str:
+        """Resolve ambiguous pronouns or short follow-ups using recent conversation history."""
+        if not history or len(history) == 0:
+            return question
+            
+        clean_q = question.strip().lower()
+        pronouns = ["it", "its", "that", "this", "them", "these", "those", "how to treat it", "what causes it", "cure"]
+        words = set(re.findall(r'\b\w+\b', clean_q))
+        has_ambiguous = any(p in words or p in clean_q for p in pronouns) or len(words) <= 4
+        
+        if has_ambiguous:
+            for turn in reversed(history):
+                if turn.get("role") == "user":
+                    prev_text = turn.get("content", "").strip()
+                    if len(prev_text) > 4 and not prev_text.startswith("/"):
+                        return f"{question} {prev_text}"
+        return question
+
+    def _build_budgeted_prompt(
+        self,
+        system_msg: str,
+        user_msg: str,
+        history: Optional[List[Dict]],
+        max_prompt_tokens: int,
+        format_type: str = "chatml"
+    ) -> str:
+        """
+        Constructs a prompt bounded strictly by token budget, guaranteeing
+        that the system prompt and latest user prompt are never cut off.
+        """
+        if format_type == "chatml":
+            sys_block = f"<|im_start|>system\n{system_msg}<|im_end|>\n"
+            current_user_block = f"<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n"
+            
+            sys_ids = self.tokenizer.encode(sys_block)
+            user_ids = self.tokenizer.encode(current_user_block)
+            base_tokens = len(sys_ids) + len(user_ids)
+            
+            remaining_budget = max(0, max_prompt_tokens - base_tokens)
+            
+            valid_history_blocks = []
+            if history:
+                for turn in reversed(history[-10:]):
+                    role = turn.get("role", "user")
+                    content = turn.get("content", "").strip()
+                    if not content:
+                        continue
+                    if role == "user":
+                        turn_str = f"<|im_start|>user\n{content}<|im_end|>\n"
+                    else:
+                        turn_str = f"<|im_start|>assistant\n{content}<|im_end|>\n"
+                    turn_ids = self.tokenizer.encode(turn_str)
+                    if len(turn_ids) <= remaining_budget:
+                        valid_history_blocks.append(turn_str)
+                        remaining_budget -= len(turn_ids)
+                    else:
+                        break
+                        
+            valid_history_blocks.reverse()
+            history_str = "".join(valid_history_blocks)
+            return f"{sys_block}{history_str}{current_user_block}"
+        else:
+            sys_block = f"System: {system_msg}\n\n"
+            current_user_block = f"User: {user_msg}\nAssistant: "
+            valid_history_blocks = []
+            if history:
+                for turn in reversed(history[-6:]):
+                    role = "User" if turn.get("role") == "user" else "Assistant"
+                    content = turn.get("content", "").strip()
+                    turn_str = f"{role}: {content}\n"
+                    valid_history_blocks.append(turn_str)
+            valid_history_blocks.reverse()
+            return f"{sys_block}{''.join(valid_history_blocks)}{current_user_block}"
+
     def _load_domains_config(self):
         """Load domain configurations dynamically from domains.yaml"""
         self.domains_registry = load_domains_from_yaml(self.domains_registry)
@@ -154,7 +229,7 @@ class RAGSystem:
         # Add each chunk
         for i, chunk in enumerate(chunks):
             try:
-                emb = self.encoder.encode(chunk).tolist()
+                emb = self.encoder.encode(chunk, show_progress_bar=False).tolist()
             except Exception as e:
                 logger.error(f"Failed to generate embedding for chunk: {e}")
                 emb = None
@@ -257,10 +332,6 @@ class RAGSystem:
             except Exception as e:
                 logger.error(f"Extractive RAG failed: {e}")
 
-        # ── Mode 2: Pre-trained HuggingFace LLM (Removed to have only Tiny LLM) ────────
-        elif mode == "hf_llm":
-            return "[HuggingFace engine has been removed. Switch to toy_llm or hybrid.]"
-
         # Build a streaming callback that prints to stdout (if requested)
         def _print_token(t: str):
             print(t, end="", flush=True)
@@ -303,7 +374,8 @@ class RAGSystem:
 
         system_msg = "You are a helpful assistant."
         if use_rag:
-            retrieved = self.search(question, k=k)
+            search_query = self._resolve_query_context(question, history)
+            retrieved = self.search(search_query, k=k)
             if retrieved:
                 context_parts = [doc.text.strip() for doc, _ in retrieved]
                 context = "\n".join(context_parts)
@@ -315,40 +387,11 @@ class RAGSystem:
         else:
             user_msg = question
 
-        # Format prompt based on the active engine mode
+        # Format prompt with token budget protection
         engine_mode = getattr(self, "response_mode", "smart_rag")
-        if engine_mode == "hf_llm" or getattr(self, "use_pretrained", False):
-            history_block = ""
-            if history:
-                for turn in history[-6:]:
-                    role = turn.get("role")
-                    content = turn.get("content", "").strip()
-                    if role == "user":
-                        history_block += f"User: {content}\n"
-                    elif role == "assistant":
-                        history_block += f"Assistant: {content}\n"
-            prompt = (
-                f"System: {system_msg}\n\n"
-                f"{history_block}"
-                f"User: {user_msg}\n"
-                f"Assistant: "
-            )
-        else:
-            history_block = ""
-            if history:
-                for turn in history[-6:]:
-                    role = turn.get("role")
-                    content = turn.get("content", "").strip()
-                    if role == "user":
-                        history_block += f"<|im_start|>user\n{content}<|im_end|>\n"
-                    elif role == "assistant":
-                        history_block += f"<|im_start|>assistant\n{content}<|im_end|>\n"
-            prompt = (
-                f"<|im_start|>system\n{system_msg}<|im_end|>\n"
-                f"{history_block}"
-                f"<|im_start|>user\n{user_msg}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
+        format_type = "standard" if (engine_mode in ["hf_llm", "slm_local"] or getattr(self, "use_pretrained", False)) else "chatml"
+        max_prompt_budget = max(64, self.max_seq_len - max_tokens)
+        prompt = self._build_budgeted_prompt(system_msg, user_msg, history, max_prompt_budget, format_type=format_type)
 
         return self.generate(prompt, max_tokens=max_tokens)
 
@@ -538,13 +581,16 @@ class RAGSystem:
         # Search & filter knowledge by domain
         k = 3
         retrieved_with_scores = []
+        search_query = self._resolve_query_context(question, history)
         if dom.id == "general":
-            retrieved_with_scores = self.search(question, k=k)
+            retrieved_with_scores = self.search(search_query, k=k)
         else:
-            all_retrieved = self.search(question, k=15)
+            all_retrieved = self.search(search_query, k=15)
             retrieved_with_scores = [item for item in all_retrieved if item[0].metadata.get('domain') == dom.id][:k]
             
-        retrieved = [doc for doc, _ in retrieved_with_scores]
+        # Only consider chunks with a solid semantic/keyword match
+        confident_matches = [item for item in retrieved_with_scores if item[1] >= 0.55]
+        retrieved = [doc for doc, _ in confident_matches]
 
         system_msg = f"You are a helpful assistant. Response style: {dom.response_style}."
         if getattr(dom, 'require_disclaimer', False) or dom.id == 'medical':
@@ -560,9 +606,7 @@ class RAGSystem:
             print(f"⚠️ Error updating mood: {e}")
             self.current_mood = None
 
-        # Format retrieval context only if we have a strong match (score >= 0.60)
-        has_strong_context = retrieved_with_scores and retrieved_with_scores[0][1] >= 0.60
-        if retrieved and has_strong_context:
+        if retrieved:
             context = "\n".join([doc.text for doc in retrieved])
             user_msg = f"Context: {context}\n\nQuestion: {question}"
         else:
@@ -579,48 +623,23 @@ class RAGSystem:
         # Decide actual mode for hybrid engine
         actual_mode = engine_mode
         if engine_mode == "hybrid":
-            # If we have a strong database match, use extractive RAG. Otherwise generate.
-            if retrieved_with_scores and retrieved_with_scores[0][1] >= 0.70:
+            # If we have a very confident database match, use extractive RAG. Otherwise generate with custom neural engine.
+            if confident_matches and confident_matches[0][1] >= 0.75:
                 actual_mode = "smart_rag"
             else:
-                # Prefer our own fine-tuned custom engine (toy_llm) for generation
                 actual_mode = "toy_llm"
         
         if actual_mode == "smart_rag" and retrieved:
             answer = retrieved[0].text
+        elif actual_mode == "rstar":
+            rstar_engine = RStarEngine(self._engine, self.tokenizer, max_seq_len=self.max_seq_len)
+            context = "\n".join([doc.text for doc in retrieved]) if retrieved else ""
+            traj = rstar_engine.reason_and_verify(question, context=context)
+            answer = traj.final_answer or (retrieved[0].text if retrieved else "I deduced the answer through reasoning.")
         else:
-            if actual_mode == "hf_llm" or getattr(self, "use_pretrained", False):
-                history_block = ""
-                if history:
-                    for turn in history[-6:]:
-                        role = turn.get("role")
-                        content = turn.get("content", "").strip()
-                        if role == "user":
-                            history_block += f"User: {content}\n"
-                        elif role == "assistant":
-                            history_block += f"Assistant: {content}\n"
-                prompt = (
-                    f"System: {system_msg}\n\n"
-                    f"{history_block}"
-                    f"User: {user_msg}\n"
-                    f"Assistant: "
-                )
-            else:
-                history_block = ""
-                if history:
-                    for turn in history[-6:]:
-                        role = turn.get("role")
-                        content = turn.get("content", "").strip()
-                        if role == "user":
-                            history_block += f"<|im_start|>user\n{content}<|im_end|>\n"
-                        elif role == "assistant":
-                            history_block += f"<|im_start|>assistant\n{content}<|im_end|>\n"
-                prompt = (
-                    f"<|im_start|>system\n{system_msg}<|im_end|>\n"
-                    f"{history_block}"
-                    f"<|im_start|>user\n{user_msg}<|im_end|>\n"
-                    f"<|im_start|>assistant\n"
-                )
+            format_type = "standard" if (actual_mode == "hf_llm" and not getattr(self, "use_pretrained", False)) else "chatml"
+            max_prompt_budget = max(64, self.max_seq_len - 120)
+            prompt = self._build_budgeted_prompt(system_msg, user_msg, history, max_prompt_budget, format_type=format_type)
             answer = self.generate(prompt, temperature=temp, stream=False)
 
         return {

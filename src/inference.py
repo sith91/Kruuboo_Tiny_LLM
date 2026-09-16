@@ -143,7 +143,14 @@ class InferenceEngine:
 
             # Early break if stop sequence appears in generated text so far
             decoded_so_far = self.tokenizer.decode(generated_ids)
-            stop_sequences = ["<|im_end|>", "<|im_start|>", "\nuser\n", "\nassistant\n", "\nsystem\n", "\nuser", "\nassistant", "\nsystem"]
+            stop_sequences = [
+                "<|im_end|>", "<|im_start|>",
+                "\n<|im_start|>", "\n<|im_end|>",
+                "\nuser\n", "\nassistant\n", "\nsystem\n",
+                "\nuser:", "\nassistant:", "\nsystem:",
+                "\nUser:", "\nAssistant:", "\nHuman:",
+                "\nuser", "\nassistant", "\nsystem"
+            ]
             should_stop = False
             for stop_seq in stop_sequences:
                 if stop_seq in decoded_so_far:

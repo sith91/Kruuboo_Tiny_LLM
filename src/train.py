@@ -1,6 +1,7 @@
 """Training script for Tiny LLM — upgraded to match new model architecture."""
 
 import math
+from typing import List, Optional, Dict, Tuple
 import torch
 import torch.nn.functional as F
 from pathlib import Path
@@ -58,6 +59,52 @@ def get_lr(step: int) -> float:
 # Trainer
 # ─────────────────────────────────────────────────────────────────────────────
 
+class ChatSample:
+    """Represents a tokenized conversation or document with target-only loss mask."""
+    def __init__(self, input_ids: List[int], labels: List[int]):
+        self.input_ids = input_ids
+        self.labels = labels
+
+
+def prepare_chat_samples(raw_samples: List[str], tokenizer: TinyTokenizer, max_seq_len: int) -> List[ChatSample]:
+    """Tokenize and mask prompt tokens so loss is computed only on assistant replies."""
+    import re
+    chat_samples = []
+    
+    for text in raw_samples:
+        if not text.strip():
+            continue
+        token_ids = tokenizer.encode(text)
+        if not token_ids:
+            continue
+
+        # If text contains ChatML assistant turns, mask out system and user prompt tokens
+        if "<|im_start|>assistant" in text:
+            labels = [-100] * len(token_ids)
+            for m in re.finditer(r'<\|im_start\|>assistant\n(.*?)(?:<\|im_end\|>|$)', text, flags=re.DOTALL):
+                prefix_text = text[:m.start()]
+                assistant_full_text = text[:m.end()]
+                
+                start_tok_idx = len(tokenizer.encode(prefix_text))
+                end_tok_idx = len(tokenizer.encode(assistant_full_text))
+                
+                for idx in range(start_tok_idx, min(end_tok_idx, len(token_ids))):
+                    labels[idx] = token_ids[idx]
+        else:
+            labels = list(token_ids)
+
+        if len(token_ids) <= max_seq_len:
+            chat_samples.append(ChatSample(token_ids, labels))
+        else:
+            # Chunk longer documents
+            step = max(max_seq_len // 2, 64)
+            for start in range(0, len(token_ids) - max_seq_len + 1, step):
+                end = start + max_seq_len
+                chat_samples.append(ChatSample(token_ids[start:end], labels[start:end]))
+
+    return chat_samples
+
+
 class Trainer:
     def __init__(self, model: TinyLLM, tokenizer: TinyTokenizer, device: str = "cpu"):
         self.model     = model.to(device)
@@ -78,52 +125,78 @@ class Trainer:
 
     # ── Batch sampler ─────────────────────────────────────────────────────────
 
-    def get_batch(self, data: torch.Tensor, batch_size: int) -> tuple:
-        """Sample a random batch of (input, target) pairs."""
-        ix = torch.randint(len(data) - BLOCK_SIZE, (batch_size,))
-        x  = torch.stack([data[i    : i + BLOCK_SIZE    ] for i in ix])
-        y  = torch.stack([data[i + 1: i + BLOCK_SIZE + 1] for i in ix])
-        return x.to(self.device), y.to(self.device)
+    def get_batch(self, samples: List[ChatSample], batch_size: int) -> tuple:
+        """Sample a batch of conversation sequences with target masking and padding."""
+        if not samples:
+            dummy_x = torch.zeros((batch_size, BLOCK_SIZE - 1), dtype=torch.long, device=self.device)
+            dummy_y = torch.zeros((batch_size, BLOCK_SIZE - 1), dtype=torch.long, device=self.device)
+            return dummy_x, dummy_y
+
+        indices = torch.randint(len(samples), (batch_size,))
+        batch_x = []
+        batch_y = []
+
+        for idx in indices:
+            s = samples[int(idx)]
+            ids = s.input_ids
+            labs = s.labels
+
+            if len(ids) < BLOCK_SIZE:
+                pad_len = BLOCK_SIZE - len(ids)
+                x_seq = ids + [TinyTokenizer.PAD_ID] * pad_len
+                y_seq = labs + [-100] * pad_len
+            else:
+                x_seq = ids[:BLOCK_SIZE]
+                y_seq = labs[:BLOCK_SIZE]
+
+            batch_x.append(torch.tensor(x_seq, dtype=torch.long))
+            batch_y.append(torch.tensor(y_seq, dtype=torch.long))
+
+        x_stacked = torch.stack(batch_x)
+        y_stacked = torch.stack(batch_y)
+
+        # Fallback if an entire row is masked to -100
+        for b in range(batch_size):
+            if (y_stacked[b, 1:] != -100).sum() == 0:
+                y_stacked[b, 1:] = x_stacked[b, 1:]
+
+        x = x_stacked[:, :-1].to(self.device)
+        y = y_stacked[:, 1:].to(self.device)
+        return x, y
 
     # ── Evaluation ────────────────────────────────────────────────────────────
 
     @torch.no_grad()
-    def evaluate(self, val_data: torch.Tensor, eval_batches: int = 10) -> float:
+    def evaluate(self, val_samples: List[ChatSample], eval_batches: int = 10) -> float:
         """Estimate validation loss (no gradient)."""
         self.model.eval()
         losses = []
         for _ in range(eval_batches):
-            x, y = self.get_batch(val_data, BATCH_SIZE)
+            x, y = self.get_batch(val_samples, BATCH_SIZE)
             logits = self.model(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-100)
             losses.append(loss.item())
         self.model.train()
-        return sum(losses) / len(losses)
+        return sum(losses) / max(1, len(losses))
 
     # ── Training loop ─────────────────────────────────────────────────────────
 
-    def train(self, text: str) -> TinyLLM:
+    def train(self, raw_samples: List[str]) -> TinyLLM:
         """
-        Full training loop with:
+        Full SFT training loop with target-only loss masking:
           - Train / validation split
           - Cosine LR schedule with linear warmup
           - Gradient clipping
           - Periodic validation loss reporting
         """
-        # Tokenise
-        token_ids = self.tokenizer.encode(text)
-        data      = torch.tensor(token_ids, dtype=torch.long)
-
-        # Train / val split
-        split    = int(len(data) * (1 - VAL_RATIO))
-        train_data = data[:split]
-        val_data   = data[split:]
-        print(f"📊 Dataset: {len(data):,} tokens  "
-              f"(train {len(train_data):,}  |  val {len(val_data):,})")
-
-        if len(train_data) <= BLOCK_SIZE:
-            print("⚠️  Training data too small — results will be poor. "
-                  "Replace sample_text with a real corpus.")
+        samples = prepare_chat_samples(raw_samples, self.tokenizer, BLOCK_SIZE)
+        
+        split = int(len(samples) * (1 - VAL_RATIO))
+        train_samples = samples[:split] if split > 0 else samples
+        val_samples   = samples[split:] if split > 0 else samples
+        
+        print(f"📊 Dataset: {len(samples):,} processed conversation samples "
+              f"(train {len(train_samples):,} | val {len(val_samples):,})")
 
         best_val_loss = float("inf")
 
@@ -145,9 +218,9 @@ class Trainer:
                 group["lr"] = lr
 
             # ── Forward / backward ───────────────────────────────────────────
-            x, y   = self.get_batch(train_data, BATCH_SIZE)
+            x, y   = self.get_batch(train_samples, BATCH_SIZE)
             logits = self.model(x)
-            loss   = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+            loss   = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-100)
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -156,7 +229,7 @@ class Trainer:
 
             # ── Logging / evaluation ─────────────────────────────────────────
             if step % EVAL_EVERY == 0 or step == MAX_ITERS - 1:
-                val_loss = self.evaluate(val_data)
+                val_loss = self.evaluate(val_samples)
                 marker   = " ✅ best" if val_loss < best_val_loss else ""
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -244,9 +317,9 @@ def train_model():
                         with open(json_file, "r", encoding="utf-8") as f:
                             data = json.load(f)
                             for item in data:
-                                if not isinstance(item, dict):
-                                    continue
-                                if "question" in item and "advice" in item:
+                                if "formatted_chatml" in item:
+                                    custom_texts.append(item["formatted_chatml"])
+                                elif "question" in item and "advice" in item:
                                     q = item["question"]
                                     a = item["advice"]
                                     formatted = f"<|im_start|>user\n{q}<|im_end|>\n<|im_start|>assistant\n{a}<|im_end|>\n"
@@ -261,17 +334,12 @@ def train_model():
 
     # Combine custom texts or fallback
     if custom_texts:
-        combined_text = "\n\n".join(custom_texts)
-        if len(combined_text) < 2000:
-            print(f"⚠️ Custom training text is too short ({len(combined_text)} chars). Repeating it to reach baseline length...")
-            repeats = (10000 // len(combined_text)) + 1
-            sample_text = combined_text * repeats
-        else:
-            sample_text = combined_text
-        print(f"📈 Loaded custom training corpus: {len(combined_text):,} characters (expanded to {len(sample_text):,} characters for training)")
+        training_samples = custom_texts
+        print(f"📈 Loaded {len(training_samples):,} training conversations/samples")
+        sample_text_for_tokenizer = "\n\n".join(custom_texts[:500])
     else:
         print("ℹ️ No custom datasets found. Falling back to default sample corpus...")
-        sample_text = (
+        sample_text_for_tokenizer = (
             "The quick brown fox jumps over the lazy dog. "
             "Python is a high-level, general-purpose programming language known for "
             "its readability and broad standard library. "
@@ -290,6 +358,7 @@ def train_model():
             "Attention mechanisms allow models to focus on relevant parts of the "
             "input sequence when producing each output token. "
         ) * 80  # repeat to give BPE enough material
+        training_samples = [sample_text_for_tokenizer]
 
     # ── BPE tokenizer ─────────────────────────────────────────────────────────
     if Path("tokenizer.json").exists():
@@ -297,7 +366,7 @@ def train_model():
         tokenizer = TinyTokenizer.load("tokenizer.json")
     else:
         tokenizer = TinyTokenizer.train_from_text(
-            text=sample_text,
+            text=sample_text_for_tokenizer,
             vocab_size=VOCAB_SIZE,
             save_path="tokenizer.json",
         )
@@ -323,12 +392,28 @@ def train_model():
     )
     if Path("models/tiny_llm.pt").exists():
         try:
-            print("💾 Loading pre-trained model weights from models/tiny_llm.pt...")
+            print("💾 Checking pre-trained model weights from models/tiny_llm.pt...")
             state_dict = torch.load("models/tiny_llm.pt", map_location="cpu")
-            model.load_state_dict(state_dict, strict=False)
-            print("✅ Weights loaded successfully!")
+            model_dict = model.state_dict()
+            matched_dict = {}
+            mismatched_keys = []
+            
+            for k, v in state_dict.items():
+                if k in model_dict and model_dict[k].shape == v.shape:
+                    matched_dict[k] = v
+                else:
+                    mismatched_keys.append(k)
+                    
+            if len(matched_dict) == len(model_dict):
+                model.load_state_dict(matched_dict)
+                print("✅ All pre-trained weights loaded successfully!")
+            elif matched_dict:
+                model.load_state_dict(matched_dict, strict=False)
+                print(f"⚠️ Model dimensions changed. Loaded {len(matched_dict)} compatible layers; newly initialized {len(mismatched_keys)} scaled layers.")
+            else:
+                print(f"ℹ️ Model scaled up to new dimensions ({D_MODEL}d / {N_LAYERS}L / {D_FF}ff). Initializing new weights from scratch.")
         except Exception as e:
-            print(f"⚠️ Failed to load pre-trained weights: {e}. Training from scratch.")
+            print(f"⚠️ Could not load existing checkpoint: {e}. Training from scratch.")
             
     print(f"🧠 Parameters: {model.num_parameters():,}"
           f"  ({model.num_parameters()/1e6:.2f} M)")
@@ -337,7 +422,7 @@ def train_model():
 
     # ── Train ─────────────────────────────────────────────────────────────────
     trainer      = Trainer(model, tokenizer, device=device)
-    trained_model= trainer.train(sample_text)
+    trained_model= trainer.train(training_samples)
 
     # ── Save ──────────────────────────────────────────────────────────────────
     Path("models").mkdir(exist_ok=True)

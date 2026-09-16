@@ -44,7 +44,7 @@ def hybrid_search(
 
     # 2. Get vector embedding for the query
     try:
-        query_emb = np.array(encoder.encode(query))
+        query_emb = np.array(encoder.encode(query, show_progress_bar=False))
         query_norm = np.linalg.norm(query_emb)
     except Exception as e:
         logger.error(f"Failed to encode query: {e}")
@@ -66,7 +66,7 @@ def hybrid_search(
             if doc_emb_list is None:
                 # Encode on the fly if not cached
                 try:
-                    doc_emb_list = encoder.encode(doc.text).tolist()
+                    doc_emb_list = encoder.encode(doc.text, show_progress_bar=False).tolist()
                     doc.metadata['embedding'] = doc_emb_list
                     needs_save = True
                 except Exception:
@@ -82,7 +82,7 @@ def hybrid_search(
         normalized_vec_score = max(0.0, min(1.0, vec_score))
         hybrid_score = 0.6 * normalized_vec_score + 0.4 * kw_score
         
-        if hybrid_score >= 0.15:
+        if hybrid_score >= 0.40:
             scored.append((doc, hybrid_score))
 
     scored.sort(key=lambda x: x[1], reverse=True)

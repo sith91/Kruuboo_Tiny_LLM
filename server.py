@@ -116,9 +116,10 @@ async def get_ui():
                 <div class="flex items-center gap-2">
                     <!-- Response Mode Selector -->
                     <select id="response-mode" class="bg-slate-800 border border-slate-700 rounded-full px-3 py-1.5 text-[10px] font-medium text-slate-300 focus:outline-none transition-colors cursor-pointer">
-                        <option value="smart_rag">Smart RAG (Extractive)</option>
-                        <option value="hf_llm">HF LLM (distilgpt2)</option>
-                        <option value="toy_llm">Toy LLM (Custom 4M)</option>
+                        <option value="rstar">rStar (Self-Play Reasoning)</option>
+                        <option value="hybrid">Hybrid (Smart RAG + Tiny LLM)</option>
+                        <option value="toy_llm">Tiny LLM (Custom 105M / 100MB)</option>
+                        <option value="smart_rag">Extractive RAG</option>
                     </select>
 
                     <label for="file-upload" class="cursor-pointer bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-full border border-slate-700 text-[10px] font-medium text-slate-300 flex items-center gap-1.5 transition-colors">
@@ -286,8 +287,7 @@ async def ask(request: Request):
     
     # Update response mode in RAG dynamically
     rag.response_mode = response_mode
-    # Keep self.use_pretrained synced for backward compatibility
-    rag.use_pretrained = (response_mode == "hf_llm")
+    rag.use_pretrained = False
     
     use_rag = (response_mode != "toy_llm")
     

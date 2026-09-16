@@ -51,7 +51,7 @@ class DomainAwareUI:
         print("  /add [text]           - Add knowledge to current domain")
         print("  /research [topic]     - Search the web and learn about a topic")
         print("  /info                 - Show domain statistics")
-        print("  /engine [mode]        - Switch generation engine (smart_rag | toy_llm | hybrid)")
+        print("  /engine [mode]        - Switch generation engine (smart_rag | toy_llm | hybrid | rstar)")
         print("  /help                 - Show this help")
         print("  /quit                 - Exit")
         print("-" * 70)
@@ -135,12 +135,12 @@ class DomainAwareUI:
                     
                     elif cmd == '/engine' and len(parts) > 1:
                         mode = parts[1].strip().lower()
-                        if mode in ["smart_rag", "toy_llm", "hybrid"]:
+                        if mode in ["smart_rag", "toy_llm", "hybrid", "rstar"]:
                             self.rag.response_mode = mode
                             self.rag.use_pretrained = False
-                            print(f"\n✅ Switched generation engine to: {mode}")
+                            print(f"\n✅ Switched generation engine to: {mode} (Mutual Reasoning)")
                         else:
-                            print("\n❌ Invalid mode. Choose from: smart_rag, toy_llm, hybrid")
+                            print("\n❌ Invalid mode. Choose from: smart_rag, toy_llm, hybrid, rstar")
                     
                     else:
                         print(f"Unknown command: {cmd}. Type /help for available commands.")
@@ -182,25 +182,8 @@ class DomainAwareUI:
                             self.history.append({"role": "user", "content": user_input})
                             self.history.append({"role": "assistant", "content": answer})
                         
-                        if response.get('domain_used'):
-                            print(f"\n🎯 Domain: {response.get('domain_name', response['domain_used'])}")
-                        
                         if response.get('knowledge_used', 0) > 0:
                             print(f"📚 Used {response['knowledge_used']} knowledge sources")
-                        else:
-                            clean_q = user_input.strip().lower().strip("?.!,")
-                            conversational_patterns = ["hi", "hello", "hey", "greetings", "good morning", "good afternoon", "good evening", "thanks", "thank you", "bye", "goodbye", "my name", "who am i", "who are you", "what is my name", "your name", "how are you", "how's it going", "how are you doing", "how is it going", "name you as", "your name is", "whats your name", "what is your name"]
-                            is_conversational = any(pat in clean_q for pat in conversational_patterns)
-                            
-                            if not is_conversational:
-                                print("🤷 Local knowledge base has no info on this.")
-                                do_research = input("💬 Shall I research this online for you? (y/n): ").lower().strip()
-                                if do_research == 'y':
-                                    if self.rag.research_and_learn(user_input):
-                                        print("🤖 Now I know! Try asking your question again.")
-                        
-                        if response.get('temperature_used'):
-                            print(f"🌡️  Temperature: {response['temperature_used']}")
                     else:
                         # Fallback to regular ask
                         answer = self.rag.ask(user_input, history=self.history)

@@ -14,7 +14,20 @@ GREETINGS_MAP = {
     "how are you doing": "I'm doing well! How can I help you today?",
     "how's it going": "It's going great! What can I do for you today?",
     "how is it going": "Everything is going well! How can I help you today?",
-    "how are you today": "I'm doing great, thank you! How are you doing today?"
+    "how are you today": "I'm doing great, thank you! How are you doing today?",
+    "i feel very lonely": "I'm really sorry you're feeling lonely. I'm right here with you! What's on your mind? We can chat about anything you like.",
+    "i feel very lonley": "I'm really sorry you're feeling lonely. I'm right here with you! What's on your mind? We can chat about anything you like.",
+    "i feel lonely": "I'm here for you! You're never truly alone. Would you like to talk about what's going on, or just chat about something fun?",
+    "i feel lonley": "I'm here for you! You're never truly alone. Would you like to talk about what's going on, or just chat about something fun?",
+    "i am lonely": "I'm here with you! Feel free to share what's on your mind, or we can talk about movies, books, or any topic you enjoy.",
+    "i am lonley": "I'm here with you! Feel free to share what's on your mind, or we can talk about movies, books, or any topic you enjoy.",
+    "i'm lonely": "I'm right here! Let's talk—what kind of things make you feel relaxed or happy?",
+    "i'm lonley": "I'm right here! Let's talk—what kind of things make you feel relaxed or happy?",
+    "i feel sad": "I'm so sorry you're feeling down. I'm here to listen and keep you company. What happened?",
+    "i'm sad": "I'm here for you. Take a deep breath. Is there anything specific on your mind, or would you like a comforting chat?",
+    "i need a friend": "I'm always happy to be here as your friend! What's on your mind today?",
+    "can we talk": "Of course! I'm all ears. What would you like to talk about?",
+    "are you there": "Yes, I'm right here! How can I help you?"
 }
 
 def extract_user_name_from_history(history: Optional[List[Dict]]) -> str:
