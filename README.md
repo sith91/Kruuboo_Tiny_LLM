@@ -1,27 +1,28 @@
-# 🎯 Kruuboo Tiny LLM (SLM-0.1) with Domain-Specific RAG & rStar Self-Play
+# 🎯 Kruuboo Tiny LLM (SLM-0.1) — Unified Conversational SLM & Native RAG
 
-A lightweight, high-capacity, and privacy-first Small Language Model (SLM) platform combining a custom-trained **105.4M Parameter Transformer Decoder** (~100 MB INT8 footprint with **RoPE**, **SwiGLU**, **1,024 Context Memory**, and **Flash Attention**) with a **Domain-Specific Retrieval-Augmented Generation (RAG)** pipeline and an **rStar-style Mutual Reasoning Self-Play Engine**.
+A high-capacity, privacy-first Small Language Model (SLM) platform combining a custom-trained **105.4M Parameter Transformer Decoder** (~100 MB INT8 footprint with **RoPE**, **SwiGLU**, **1,024 Context Memory**, and **Flash Attention**) with a **Native 768d Semantic RAG Memory**, **Min-P Sampling**, and an interactive **Live Learning Visualizer & Training Studio**.
 
-This project demonstrates how small-scale, locally trained neural models can achieve high accuracy, multi-turn conversational fluency, and robust multi-step logical deduction on consumer hardware (CPU / Apple Silicon Metal MPS / NVIDIA CUDA) without cloud dependencies.
+Kruuboo-SLM-0.1 operates as a **single unified conversational agent** — responding naturally to general dialogue, personal introductions, medical remedies, legal advice, and survival scenarios without rigid domain gating or external third-party dependencies.
 
 ---
 
-## 🌟 Key Highlights
+## 🌟 Key Architectural Highlights
 
 - **105.4M Parameter High-Capacity SLM**: Built from scratch with an optimized 14-layer transformer architecture, offering an ideal balance between reasoning capacity and edge runtime efficiency (~100 MB INT8 / ~210 MB FP16).
-- **Extended 1,024-Token Context Memory**: Extended context memory window supporting long multi-turn dialogues, multi-document synthesis, and reasoning chains.
+- **Unified Conversational Chat (Zero Domain Silos)**: Replaced brittle rule-based domain selectors with unified **ChatML** multi-turn dialogue memory. The model conversationally answers questions across all domains using its weights and global semantic memory.
+- **Native 768d Semantic RAG Encoder**: Self-contained RAG retrieval powered directly by the 14-layer transformer decoder (`ln_f(h)`). Eliminates external dependencies on Hugging Face / `sentence-transformers` and unifies the embedding and vocabulary space ($V=8,192, d_{\text{model}}=768$).
+- **Modern Min-P Sampling & Contextual Temperature**:
+  - **Min-P Sampling** ($p_{\text{base}} = 0.05$): Dynamically scales token pruning relative to top-token confidence ($p \ge p_{\text{max}} \times 0.05$), eliminating low-probability hallucinations while allowing rich conversational vocabulary.
+  - **Dynamic Contextual Temperature**: Automatically scales between $T = 0.2$ for factual retrieval and $T = 0.65$ for natural conversational flow.
+- **Live Learning Monitor & Visualizer (Web UI)**: Interactive telemetry dashboard on `http://localhost:8000` with real-time Chart.js loss/perplexity curves, token throughput speed (tok/s), cosine LR schedule tracking, on-the-go fine-tuning controls, and weight probing cards.
 - **State-of-the-Art Transformer Building Blocks**:
   - **Rotary Position Embeddings (RoPE)** for length extrapolation without position table limits.
   - **SwiGLU Gated Feed-Forward Networks** for superior representational density.
   - **Flash Attention** via PyTorch 2.0+ `scaled_dot_product_attention` fused kernels.
   - **Pre-LayerNorm** and **GPT-2 style scaled residual initialization**.
-  - **Embedding & LM Head Weight Tying** for parameter efficiency.
-- **rStar Mutual Reasoning & Self-Play**: Dual-role engine (Proposer + Verifier) that generates diverse reasoning trajectories (`<thought>...</thought>`), fact-checks each step against retrieved RAG evidence, and prunes hallucinations.
-- **SFT ChatML Training with Target-Only Loss Masking**: Computes Cross-Entropy loss exclusively on assistant response tokens (masking system instructions and user queries to `-100`).
-- **Conversational Memory & Contextual Coreference Resolution**: Dynamic sliding memory buffer that preserves system instructions and resolves follow-up queries (e.g., *"How do I treat it?"* $\rightarrow$ linked to preceding ailment).
-- **Domain-Specific Semantic Routing**: Automatically classifies queries into isolated domain knowledge bases (Medical/Home Remedies, Legal, Survival, Math, Sinhala News, General) via `domains.yaml` to eliminate context contamination.
-- **Affective Sentiment & Mood Tracking**: Real-time emotional valence tracking and persistent state updates (`mood_state.json`) for empathetic persona modulation.
-- **Autonomous Web Researcher**: Built-in scraper and live embedder that searches external sources to dynamically patch knowledge gaps on demand.
+  - **Tied Input-Output Weights** for parameter efficiency.
+- **SFT ChatML Training with Target-Only Loss Masking**: Masks system instructions and user queries (`labels = -100`), calculating loss exclusively on assistant response tokens.
+- **Affective Sentiment & Mood Tracking**: Real-time emotional valence tracking and persistent state updates (`workspace/mood_state.json`) for empathetic persona modulation.
 
 ---
 
@@ -31,11 +32,11 @@ This project demonstrates how small-scale, locally trained neural models can ach
 | :--- | :--- | :--- |
 | **Model Name** | `Kruuboo-SLM-0.1` (`tiny_llm`) | Custom decoder-only autoregressive transformer |
 | **Total Parameters** | **105,426,432 (~105.4M)** | High-capacity small language model |
-| **Layers ($N_{\text{layers}}$)** | **14 Transformer Blocks** | Deeper feature representation and hierarchical reasoning |
-| **Hidden Dim ($d_{\text{model}}$)** | **768** | Standard high-capacity representation size |
+| **Layers ($N_{\text{layers}}$)** | **14 Transformer Blocks** | Deep hierarchical reasoning and dense representation |
+| **Hidden Dim ($d_{\text{model}}$)** | **768** | High-capacity representation size |
 | **Attention Heads ($N_{\text{heads}}$)**| **12 Heads** | Head dimension $d_{\text{head}} = 64$ ($768 / 12$) |
 | **FFN Intermediate Dim ($d_{\text{ff}}$)**| **3072** ($\approx \frac{2}{3} d_{\text{ff}} = 2048$ SwiGLU) | Swish-gated linear projections ($W_1, W_2, W_3$) |
-| **Context Window ($T_{\text{max}}$)** | **1,024 Tokens** | Supports long multi-turn context and RAG chunks |
+| **Context Window ($T_{\text{max}}$)** | **1,024 Tokens** | Extended multi-turn context and RAG memory window |
 | **Vocabulary Size ($V$)** | **8,192 Subwords** | Byte-Pair Encoding (BPE) with ChatML special tokens |
 | **Positional Encoding** | **RoPE (Rotary Position Embeddings)** | Frequency base $\theta = 10,000$; supports dynamic sequence lengths |
 | **Attention Mechanism** | **Flash Attention (Fused SDPA)** | $O(N)$ memory execution on PyTorch 2.0+ with causal masking |
@@ -43,73 +44,67 @@ This project demonstrates how small-scale, locally trained neural models can ach
 | **Normalization** | **Pre-LayerNorm** | Applied before attention and FFN sub-layers ($\epsilon = 10^{-5}$) |
 | **Weight Sharing** | **Tied Embeddings** | `token_embedding.weight` $\equiv$ `lm_head.weight` |
 | **Weight Initialization** | **GPT-2 Scaled Residual** | Residual projections scaled by $\frac{0.02}{\sqrt{2 \cdot N_{\text{layers}}}}$ |
-| **Memory Footprint** | **~105 MB (INT8) / ~210 MB (FP16)** | Instant edge inference on CPU, Metal (MPS), and CUDA |
+| **Sampling Technique** | **Min-P Sampling ($p_{\text{base}} = 0.05$)** | Confidence-adaptive thresholding preventing tail hallucinations |
+| **Memory Footprint** | **~100 MB (INT8) / ~210 MB (FP16)** | Instant edge inference on CPU, Apple Silicon Metal (MPS), and CUDA |
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ Unified System Architecture
 
 ```mermaid
 graph TD
-    UserQuery([User Query / Chat Message]) --> Mood[Sentiment & Affective Analyzer]
-    UserQuery --> Coref[Contextual Coreference Resolver]
-    Coref --> Router{Dynamic Domain Router}
+    UserQuery([User Input / Message]) --> Mood[Sentiment & Emotional Valence Tracker]
+    UserQuery --> ContextResolver[Sliding Context & Coreference Resolver]
     
-    Router -->|Rules & Keyword Match| ActiveDomain[Selected Domain KB]
-    Router -->|Low Confidence| Fallback[General Knowledge Base]
+    ContextResolver --> NativeEncoder[Native SLM 768d Encoder: src/rag/native_encoder.py]
+    NativeEncoder --> HybridSearch[Hybrid Semantic Search: 65% Lexical + 35% 768d Cosine]
     
-    ActiveDomain --> Embed[Dense Embedding Model: all-MiniLM-L6-v2]
-    Fallback --> Embed
-    Embed --> FAISS[FAISS Vector Store / Index]
-    FAISS --> Context[Retrieved Grounded Context Chunks]
+    HybridSearch --> GlobalKB[(Global Semantic Memory: 758+ Docs)]
+    GlobalKB --> RetrievedContext[Retrieved Grounded Evidence]
     
-    Context --> EngineSwitch{Inference Engine Selector}
+    RetrievedContext --> ChatMLBuilder[ChatML Multi-Turn Prompt Builder]
+    UserQuery --> ChatMLBuilder
     
-    EngineSwitch -->|rstar| RStar[rStar Mutual Reasoning Engine]
-    EngineSwitch -->|hybrid| Hybrid[Hybrid RAG + Neural Generator]
-    EngineSwitch -->|toy_llm| Generator[Custom 105.4M Transformer Decoder]
-    EngineSwitch -->|smart_rag| Extractive[Extractive Knowledge Matcher]
-    
-    subgraph Custom Neural Engine (105.4M Parameters)
-        Generator --> Tokenizer[BPE Tokenizer (8K Vocab + ChatML)]
+    subgraph Kruuboo-SLM-0.1 Neural Engine (105.4M Parameters)
+        ChatMLBuilder --> Tokenizer[BPE Tokenizer: 8,192 Vocab + ChatML]
         Tokenizer --> RoPE[RoPE Rotary Embeddings]
-        RoPE --> Blocks[14x Blocks: FlashAttn + SwiGLU FFN]
+        RoPE --> Blocks[14x Transformer Blocks: FlashAttn + SwiGLU]
         Blocks --> Norm[Final LayerNorm & Tied LM Head]
-        Norm --> Output[Generated Logits & Sampling]
+        Norm --> MinP[Min-P Sampler: p_base = 0.05, Contextual Temp]
     end
     
-    RStar --> Output
-    Hybrid --> Output
-    Extractive --> Output
+    MinP --> AssistantReply([Conversational Grounded Response])
     
-    WebDaemon[Autonomous Web Researcher / Scraper] -.->|Live Ingest| FAISS
-    Mood -.->|Update Mood State| Workspace[(mood_state.json)]
+    subgraph Live Learning Studio & Telemetry
+        LiveMonitor[Web UI Live Visualizer] <-->|SSE Stream: /api/training/events| Trainer[SFT Trainer: Target-Only Loss Masking]
+        Trainer -.->|Weight Updates| Blocks
+    end
 ```
 
 ---
 
-## 🛡️ Core Engine Components
+## 🛡️ Core System Components
 
 ### 1. Neural Transformer (`src/model.py`)
-- **Rotary Position Embeddings (RoPE)**: Dynamically rotates query and key representations in complex vector sub-spaces, maintaining relative distance awareness without fixed learned position tables.
-- **SwiGLU Gated Feed-Forward**: Employs dual-gate linear projections modulated by the SiLU (Swish) activation function to maximize non-linear expressiveness.
-- **PyTorch 2.0+ Flash Attention**: Utilizes kernel-level memory fused dot-product attention for lower peak VRAM and faster forward passes.
-- **Tied Input-Output Weights**: Shared embedding tensor reduces parameter overhead and aligns token input representations directly with logit projections.
+- **RoPE & SwiGLU**: Implements rotary position embedding calculation and SwiGLU gating for fast convergence and high expressiveness.
+- **Native Embedding Extraction**: Exposes `forward_features()` and `get_embeddings()` using post-LayerNorm hidden states with mean-pooling and L2 normalization for self-contained RAG retrieval.
+- **Flash Attention**: Accelerated scaled dot-product attention kernels natively running on Apple Silicon (MPS), NVIDIA CUDA, and vectorized CPU.
 
-### 2. rStar Mutual Reasoning Self-Play (`src/rstar.py` & `scripts/rstar_self_play.py`)
-- **Proposer (Generator)**: Decomposes complex queries into atomic deductive steps, generating reasoning trajectories enclosed in `<thought>...</thought>` blocks.
-- **Mutual Verifier (Discriminator)**: Performs fact-checking and consistency validation against retrieved RAG ground truth.
-- **Best-of-N Candidate Search**: Explores multiple reasoning trajectories at varying temperatures ($T \in [0.6, 1.0]$) and selects the highest-confidence path.
-- **Synthetic Self-Play Generation**: Synthesizes verified multi-turn ChatML datasets to fine-tune the model for autonomous step-by-step reasoning.
+### 2. Unified Native RAG & Hybrid Search (`src/rag/`)
+- **`NativeSLMEncoder` (`src/rag/native_encoder.py`)**: Self-contained embedding retriever running on the same weights and 8,192 vocabulary as the language model.
+- **`hybrid_search` (`src/rag/search.py`)**: Vectorized cosine similarity computation combined with robust lexical matching, preventing semantic noise from dominating factual matches.
+- **Sliding Multi-Turn Context**: Preserves dialogue turns and resolves conversational follow-ups (e.g. *"What is my name?"* or *"How to treat it?"*).
 
-### 3. SFT Training & Loss Masking (`src/train.py`)
-- **Target-Only Loss Masking**: Sets labels for system prompts and user query turns to `-100` (`ignore_index`), directing 100% of gradient descent updates to assistant outputs.
-- **Cosine Learning Rate Decay with Linear Warmup**: Peak learning rate $\eta_{\text{max}} = 3\times 10^{-4}$ decaying smoothly to $\eta_{\text{min}} = 1\times 10^{-5}$ with AdamW decoupled weight decay ($0.1$) and gradient clipping ($1.0$).
+### 3. Min-P Inference Engine (`src/inference.py`)
+- Implements autoregressive generation with dynamic **Min-P sampling** ($p_{\text{base}} = 0.05$), repetition penalties, and real-time token streaming callbacks.
 
-### 4. Domain-Specific Semantic RAG (`src/rag/`)
-- **Dynamic Domain Registry (`domains.yaml`)**: Domain-specific isolation for Medical, Legal, Survival, Mathematics, Teaching ABC, Product Pricing, and Sinhala News.
-- **Hybrid Search**: Combines BM25 keyword matching with dense `sentence-transformers/all-MiniLM-L6-v2` embeddings in FAISS.
-- **Safety Disclaimers**: Automatic rule-based injection of regulatory disclaimers for sensitive domains (e.g., medical advice, legal questions).
+### 4. SFT Training & Loss Masking (`src/train.py`)
+- **Target-Only Loss Masking**: Sets system/user token labels to `-100`, focusing optimization strictly on assistant answers.
+- **Cosine Schedule with Linear Warmup**: Peak learning rate $\eta_{\text{max}} = 3\times 10^{-4}$ decaying to $\eta_{\text{min}} = 1\times 10^{-5}$ with AdamW decoupled weight decay ($0.1$).
+
+### 5. Live Learning Studio & Web UI (`server.py`)
+- **Conversational Chat Tab**: Clean, glassmorphic ChatGPT/Claude-style chat with markdown rendering, streaming responses, and source transparency.
+- **Live Learning Monitor Tab**: Real-time SSE telemetry charts displaying training/validation loss, perplexity ($e^{\text{loss}}$), throughput (tok/s), and real-time probe generation cards.
 
 ---
 
@@ -118,34 +113,34 @@ graph TD
 ```text
 tiny_llm_rag_project/
 ├── config.yaml                     # Model hyperparams (105.4M, 14 layers, 1024 seq_len), RAG & training settings
-├── domains.yaml                    # Domain routing rules, keyword triggers, and auto-detect thresholds
-├── requirements.txt                # Project dependencies
-├── main.py                         # Interactive domain-aware CLI with slash commands
-├── server.py                       # FastAPI backend & responsive chat Web UI
+├── requirements.txt                # Python dependencies
+├── main.py                         # Unified conversational terminal CLI
+├── server.py                       # FastAPI server & Web UI (Chat + Live Learning Monitor)
 │
 ├── src/
-│   ├── model.py                    # 105.4M Transformer Decoder (RoPE, SwiGLU, FlashAttn, Pre-LN)
+│   ├── model.py                    # 105.4M Transformer Decoder (RoPE, SwiGLU, FlashAttn, Native Embeddings)
 │   ├── tokenizer.py                # BPE Subword Tokenizer (8,192 vocab, ChatML special tokens)
-│   ├── inference.py                # Autoregressive generation, temperature, top-k/top-p sampling
+│   ├── inference.py                # Autoregressive generation with Min-P sampling and contextual temperature
 │   ├── rstar.py                    # rStar mutual reasoning self-play engine
-│   ├── train.py                    # SFT training pipeline with target-only loss masking
+│   ├── train.py                    # SFT training pipeline with target-only loss masking and step callbacks
 │   ├── feeling.py                  # Sentiment analysis, affective state & mood tracker
 │   ├── web_researcher.py           # Real-time web scraping and dynamic knowledge ingestion
 │   └── rag/
-│       ├── system.py               # RAG coordinator, sliding memory window, and context budget
-│       ├── search.py               # Hybrid keyword + FAISS dense vector search
-│       ├── domain.py               # Domain registry and automatic rule matcher
-│       └── greetings.py            # Greeting, name, and persona management
+│       ├── system.py               # Unified conversational RAG coordinator and dialogue manager
+│       ├── native_encoder.py       # Self-contained 768d SLM dense vector encoder
+│       ├── search.py               # Hybrid lexical + 768d vector cosine search
+│       ├── greetings.py            # Conversational greetings, persona, and name memory resolution
+│       └── document.py             # Document data structures and serialization
 │
 ├── scripts/
 │   ├── rstar_self_play.py          # Synthetic reasoning dataset generator via self-play
 │   ├── export_onnx.py              # Export PyTorch model to optimized ONNX format
 │   ├── download_datasets.py        # Dataset downloader and formatter
-│   └── build_knowledge_base.py     # Knowledge base builder and FAISS indexer
+│   └── build_knowledge_base.py     # Global semantic knowledge base indexer
 │
 ├── training_data/                  # SFT training datasets (.json, .txt)
-├── knowledge_base/                 # Domain document chunks, raw knowledge, and vector indexes
-└── workspace/                      # Dynamic runtime state (e.g., mood_state.json)
+├── knowledge_base/                 # Global semantic documents and metadata (knowledge.json)
+└── workspace/                      # Dynamic runtime telemetry and mood state
 ```
 
 ---
@@ -154,60 +149,61 @@ tiny_llm_rag_project/
 
 ### 1. Installation
 
-Ensure you have Python 3.10+ installed:
+Ensure Python 3.9+ is installed:
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Run the Interactive CLI
-
-Launch the domain-aware interactive shell:
-```bash
-python3 main.py
-```
-
-#### Available CLI Commands:
-* `/engine [rstar|hybrid|toy_llm|smart_rag]` — Switch active inference engine.
-* `/domains` — List all registered knowledge domains.
-* `/mode [domain_id]` — Manually switch active domain (e.g., `/mode medical`, `/mode survival`).
-* `/auto` — Toggle automatic domain detection on/off.
-* `/research [topic]` — Scrape the web and ingest knowledge on-the-fly.
-* `/info` — View system, model architecture, and knowledge base statistics.
-* `/quit` — Exit the session.
-
-### 3. Run the Web Application
+### 2. Run the Web Application & Live Learning Studio
 
 Start the local server and web UI:
 ```bash
 python3 server.py
 ```
-Open `http://localhost:8000` in your browser for the responsive desktop and mobile chat interface.
+Open **`http://localhost:8000`** in your browser:
+- **Conversational Chat**: Interactive multi-turn chat with grounded semantic memory.
+- **Live Learning Monitor**: Watch real-time loss and perplexity curves, monitor token speed, and launch on-the-go fine-tuning.
 
-### 4. Training & Self-Play Pipeline
+### 3. Run the Interactive CLI
 
-1. **Generate rStar Self-Play Reasoning Data**:
-   ```bash
-   python3 scripts/rstar_self_play.py
-   ```
+Launch the conversational terminal shell:
+```bash
+python3 main.py
+```
 
-2. **Train the 105.4M Transformer with SFT Loss Masking**:
+#### Available CLI Commands:
+* `/clear` — Clear current conversation context memory.
+* `/research [topic]` — Scrape the web and ingest knowledge on-the-fly.
+* `/add [text]` — Ingest custom text directly into global semantic memory.
+* `/info` — View system architecture and memory statistics.
+* `/help` — Show help menu.
+* `/quit` — Exit the session.
+
+### 4. Training & Model Export
+
+1. **Train the 105.4M Transformer with SFT ChatML**:
    ```bash
    python3 src/train.py
    ```
 
-3. **Export to ONNX (Optional for Edge / C++ Deployment)**:
+2. **Generate Synthetic rStar Reasoning Data**:
+   ```bash
+   python3 scripts/rstar_self_play.py
+   ```
+
+3. **Export to INT8 ONNX for Fast Edge Deployment**:
    ```bash
    python3 scripts/export_onnx.py
    ```
 
 ---
 
-## ⚡ Inference Engines Summary
+## 🧪 Verified Capabilities
 
-| Engine Mode | Description | Best For |
+| Query Scenario | Example Input | Expected Output Behavior |
 | :--- | :--- | :--- |
-| **`rstar`** | Multi-path mutual reasoning self-play with grounding verification and answer synthesis. | Complex questions, multi-step deduction, factual problem-solving. |
-| **`hybrid`** | Blends high-confidence RAG context retrieval with custom neural generation. | General balanced conversational assistant use. |
-| **`toy_llm`** | Direct token-by-token generation from the custom 105.4M Transformer. | Creative exploration, raw LLM testing. |
-| **`smart_rag`** | Exact extractive snippet matching from domain vector stores. | Fact lookup, strict regulatory compliance. |
-
+| **Casual Conversation** | `"Hi, how are you today?"` | Empathetic, fluent natural dialogue without domain switching. |
+| **Identity & Memory** | `"My name is Sithija"` $\rightarrow$ `"What is my name?"` | Multi-turn contextual memory recall (*"Your name is Sithija"*). |
+| **Medical Remedies** | `"What is the remedy for fever?"` | Grounded clinical advice retrieved from global semantic memory. |
+| **Legal Agreements** | `"What is an NDA and what must it contain?"` | Grounded contract definitions and structural requirements. |
+| **Survival Wilderness** | `"How to build a shelter in survival?"` | Actionable lean-to shelter construction guidelines. |

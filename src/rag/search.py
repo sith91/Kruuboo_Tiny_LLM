@@ -45,44 +45,57 @@ def hybrid_search(
     # 2. Get vector embedding for the query
     try:
         query_emb = np.array(encoder.encode(query, show_progress_bar=False))
-        query_norm = np.linalg.norm(query_emb)
+        if query_emb.ndim > 1:
+            query_emb = query_emb.squeeze(0)
+        query_norm = float(np.linalg.norm(query_emb))
     except Exception as e:
         logger.error(f"Failed to encode query: {e}")
         query_emb = None
-        query_norm = 0
+        query_norm = 0.0
+
+    needs_save = False
+    if query_emb is not None and query_norm > 0:
+        # Check if documents need batch embedding (missing or dimension mismatch)
+        missing_docs = [
+            doc for doc in documents 
+            if doc.metadata.get('embedding') is None or len(doc.metadata.get('embedding', [])) != len(query_emb)
+        ]
+        if missing_docs:
+            try:
+                batch_texts = [d.text for d in missing_docs]
+                embs = encoder.encode(batch_texts, batch_size=32)
+                for d, emb in zip(missing_docs, embs):
+                    d.metadata['embedding'] = emb.tolist()
+                needs_save = True
+            except Exception as e:
+                logger.error(f"Batch embedding failed: {e}")
 
     scored = []
-    needs_save = False
     for doc in documents:
         # 2.1 Calculate Keyword overlap score
         doc_words = set(re.findall(r'\w+', doc.text.lower()))
         overlap = len(keywords & doc_words)
-        kw_score = (overlap / len(keywords)) if keywords else 0
+        kw_score = (overlap / len(keywords)) if keywords else 0.0
         
         # 2.2 Calculate Vector semantic similarity score
         vec_score = 0.0
-        if query_emb is not None:
+        if query_emb is not None and query_norm > 0:
             doc_emb_list = doc.metadata.get('embedding')
-            if doc_emb_list is None:
-                # Encode on the fly if not cached
-                try:
-                    doc_emb_list = encoder.encode(doc.text, show_progress_bar=False).tolist()
-                    doc.metadata['embedding'] = doc_emb_list
-                    needs_save = True
-                except Exception:
-                    pass
-            
-            if doc_emb_list is not None:
+            if doc_emb_list is not None and len(doc_emb_list) == len(query_emb):
                 doc_emb = np.array(doc_emb_list)
-                doc_norm = np.linalg.norm(doc_emb)
-                if query_norm > 0 and doc_norm > 0:
+                doc_norm = float(np.linalg.norm(doc_emb))
+                if doc_norm > 0:
                     vec_score = float(np.dot(query_emb, doc_emb) / (query_norm * doc_norm))
         
-        # 2.3 Compute Hybrid score (Weighted combination: 60% semantic + 40% keyword)
+        # 2.3 Compute Robust Hybrid Score
         normalized_vec_score = max(0.0, min(1.0, vec_score))
-        hybrid_score = 0.6 * normalized_vec_score + 0.4 * kw_score
-        
-        if hybrid_score >= 0.40:
+        if kw_score > 0:
+            hybrid_score = 0.65 * kw_score + 0.35 * normalized_vec_score
+        else:
+            # If no key lexical terms match, penalize vector baseline noise
+            hybrid_score = 0.30 * max(0.0, normalized_vec_score - 0.5)
+
+        if hybrid_score >= 0.30:
             scored.append((doc, hybrid_score))
 
     scored.sort(key=lambda x: x[1], reverse=True)

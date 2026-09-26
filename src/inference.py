@@ -66,25 +66,26 @@ class InferenceEngine:
         prompt: str,
         *,
         max_new_tokens:    int   = 120,
-        temperature:       float = 0.7,
-        top_k:             int   = 40,
-        top_p:             float = 0.90,
+        temperature:       float = 0.65,
+        min_p:             float = 0.05,
+        top_k:             int   = 0,
+        top_p:             float = 1.0,
         repetition_penalty:float = 1.15,
         on_token: Optional[Callable[[str], None]] = None,
     ) -> str:
         """
-        Generate text that continues *prompt*.
+        Generate text that continues *prompt* with Min-P sampling and contextual temperature.
 
         Parameters
         ----------
         prompt             : The text the model will continue.
         max_new_tokens     : Maximum tokens to generate (not counting the prompt).
-        temperature        : 0 = greedy, higher = more random.
-        top_k              : Keep only the top-k logits before sampling.
-        top_p              : Nucleus probability threshold (0-1).
+        temperature        : 0 = greedy, 0.2 = factual/remedies, 0.65 = natural conversational.
+        min_p              : Dynamic cutoff threshold relative to top token (p_max * min_p).
+        top_k              : Optional top-k filter (0 = disabled in favor of Min-P).
+        top_p              : Optional nucleus probability threshold (1.0 = disabled).
         repetition_penalty : Values > 1 penalise repeated tokens (1 = off).
-        on_token           : Optional callback called with each decoded token
-                             string as it is produced (for streaming UIs).
+        on_token           : Optional callback for streaming tokens.
 
         Returns
         -------
@@ -119,17 +120,23 @@ class InferenceEngine:
             else:
                 logits = logits / max(temperature, 1e-8)
 
-                # 3. Top-k filtering
-                logits = _top_k_filter(logits, top_k)
+                # 3. Min-P dynamic filtering (eliminates noise dynamically scaled to top token)
+                if min_p > 0.0:
+                    logits = _min_p_filter(logits, min_p)
 
-                # 4. Top-p (nucleus) filtering
-                logits = _top_p_filter(logits, top_p)
+                # 4. Top-k filtering (if enabled)
+                if top_k > 0:
+                    logits = _top_k_filter(logits, top_k)
 
-                # 5. Sample
+                # 5. Top-p (nucleus) filtering (if enabled)
+                if top_p < 1.0:
+                    logits = _top_p_filter(logits, top_p)
+
+                # 6. Sample
                 probs      = _softmax(logits)
                 next_token = int(np.random.choice(len(probs), p=probs))
 
-            # 6. Stop on EOS / PAD
+            # 7. Stop on EOS / PAD
             is_bpe = getattr(self.tokenizer, "_tokenizer", None) is not None
             if next_token == PAD_ID or (is_bpe and next_token == EOS_ID):
                 break
@@ -203,6 +210,22 @@ def _apply_repetition_penalty(
                 logits[tok] /= penalty
             else:
                 logits[tok] *= penalty
+    return logits
+
+
+def _min_p_filter(logits: np.ndarray, min_p: float = 0.05) -> np.ndarray:
+    """
+    Min-P sampling filter:
+    Calculates dynamic threshold = max_prob * min_p.
+    Tokens with probability below this dynamic threshold are masked out.
+    """
+    if min_p <= 0.0 or min_p >= 1.0:
+        return logits
+    logits = logits.copy()
+    probs = _softmax(logits)
+    p_max = float(np.max(probs))
+    threshold = p_max * min_p
+    logits[probs < threshold] = -1e10
     return logits
 
 

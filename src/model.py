@@ -321,6 +321,34 @@ class TinyLLM(nn.Module):
         h = self.ln_f(h)
         return self.lm_head(h)                       # [B, T, vocab_size]
 
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Extract the post-LayerNorm hidden states before the LM head projection.
+        x : LongTensor [batch, seq_len]
+        returns hidden states [batch, seq_len, d_model]
+        """
+        _B, T = x.shape
+        assert T <= self.max_seq_len, (
+            f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}."
+        )
+        h = self.token_embedding(x)
+        rope = self.rope_freqs[:T]
+        for block in self.blocks:
+            h = block(h, rope)
+        return self.ln_f(h)
+
+    def get_embeddings(self, x: torch.Tensor, pad_id: int = 0) -> torch.Tensor:
+        """
+        Compute mean-pooled, L2-normalized sequence embeddings for native RAG.
+        x : LongTensor [batch, seq_len]
+        returns normalized embeddings [batch, d_model]
+        """
+        features = self.forward_features(x)  # [B, T, d_model]
+        mask = (x != pad_id).unsqueeze(-1).float()  # [B, T, 1]
+        mask_sum = mask.sum(dim=1).clamp(min=1e-9)
+        pooled = (features * mask).sum(dim=1) / mask_sum  # [B, d_model]
+        return F.normalize(pooled, p=2, dim=-1)
+
     # ── Convenience ───────────────────────────────────────────────────────────
 
     def num_parameters(self, trainable_only: bool = True) -> int:

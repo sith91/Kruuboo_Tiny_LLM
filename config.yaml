@@ -22,7 +22,7 @@ training:
   val_ratio: 0.1        # fraction held out for validation
 
 rag:
-  embedding_model: "all-MiniLM-L6-v2"
+  embedding_model: "native"
   chunk_size: 800       # fits rich context into 1024 window
   chunk_overlap: 80
   max_context_length: 2500
