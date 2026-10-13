@@ -1,5 +1,5 @@
 """
-NativeSLMEncoder — Self-Contained Embedding Engine using Kruuboo-SLM-0.1
+NativeSLMEncoder — Self-Contained Embedding Engine using Kruuboo-SLM-0.2
 ========================================================================
 
 Extracts dense 768-dimensional sequence representations directly from the
@@ -20,7 +20,7 @@ from src.tokenizer import TinyTokenizer
 
 class NativeSLMEncoder:
     """
-    Self-contained RAG embedding retriever powered by Kruuboo-SLM-0.1.
+    Self-contained RAG embedding retriever powered by Kruuboo-SLM-0.2.
     """
 
     def __init__(

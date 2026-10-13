@@ -30,6 +30,9 @@ model_path = "models/tiny_llm_quantized.onnx"
 tokenizer_path = "tokenizer.json"
 rag = RAGSystem(model_path, tokenizer_path, max_seq_len=MODEL_MAX_SEQ_LEN)
 
+# Wire live learning model hot-reload: when background training finishes, reload active session
+training_monitor.on_training_complete = lambda: rag.reload_model()
+
 
 @app.get("/", response_class=HTMLResponse)
 async def get_ui():
@@ -125,7 +128,7 @@ async def get_ui():
                     </div>
                     <div>
                         <div class="flex items-center gap-2">
-                            <h1 class="font-bold text-base tracking-tight text-white">Kruuboo SLM-0.1</h1>
+                            <h1 class="font-bold text-base tracking-tight text-white">Kruuboo SLM-0.2</h1>
                             <span class="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full font-semibold">105.4M</span>
                         </div>
                         <p class="text-[10px] text-slate-400 font-medium">Conversational AI with Native 768d Semantic RAG</p>
@@ -861,6 +864,15 @@ async def probe_model(request: Request):
     prompt = body.get("prompt", "What makes a contract valid?")
     output = training_monitor.probe_model(prompt)
     return JSONResponse(content={"prompt": prompt, "output": output})
+
+
+@app.post("/api/model/reload")
+async def reload_model():
+    """Explicitly hot-reload the ONNX model from disk into the active RAG system."""
+    success = rag.reload_model()
+    if success:
+        return JSONResponse(content={"message": "Model successfully hot-reloaded into memory."})
+    return JSONResponse(status_code=500, content={"error": "Failed to hot-reload model."})
 
 
 @app.post("/ask")

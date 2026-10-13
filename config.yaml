@@ -41,3 +41,32 @@ storage:
 wolfram:
   appid: "YOUR_WOLFRAM_APPID"
   enabled: true
+
+web_research:
+  enabled: true
+  max_results: 3
+  # Fallback provider chain: executed in order until valid knowledge is retrieved
+  providers:
+    - wolfram        # Math & scientific calculations (if query matches math patterns)
+    - duckduckgo     # Fast, unauthenticated instant answers & web summaries
+    - wikipedia      # Detailed encyclopedic knowledge & article summaries
+    - arxiv          # Academic research papers for science/AI/math queries
+  
+  duckduckgo:
+    enabled: true
+    timeout: 5
+
+  wikipedia:
+    enabled: true
+    language: "en"
+    max_results: 3
+
+  wolfram:
+    enabled: true
+    appid: "YOUR_WOLFRAM_APPID"
+    timeout: 5
+
+  arxiv:
+    enabled: true
+    max_results: 2
+    timeout: 5

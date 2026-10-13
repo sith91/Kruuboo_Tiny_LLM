@@ -24,24 +24,43 @@ def prepare_bundle():
         shutil.copy(tokenizer_src, bundle_path / "tokenizer.json")
         print("  ✅ Tokenizer bundled")
 
-    # 4. Consolidate Domain Knowledge
-    print("  🔍 Gathering domain knowledge...")
-    kb_root = Path("knowledge_bases")
-    mobile_kb = {}
-    
-    if kb_root.exists():
-        for domain_dir in kb_root.iterdir():
-            if domain_dir.is_dir():
-                kb_file = domain_dir / "knowledge.json"
-                if kb_file.exists():
-                    with open(kb_file, 'r') as f:
-                        mobile_kb[domain_dir.name] = json.load(f)
-        
-        with open(bundle_path / "knowledge_base.json", 'w') as f:
-            json.dump(mobile_kb, f)
-        print(f"  ✅ Knowledge bundled ({len(mobile_kb)} domains)")
+    # 4. Consolidate Knowledge Base
+    print("  🔍 Bundling semantic knowledge base...")
+    kb_file = Path("knowledge_base/knowledge.json")
+    if kb_file.exists():
+        shutil.copy(kb_file, bundle_path / "knowledge_base.json")
+        with open(kb_file, "r", encoding="utf-8") as f:
+            docs = json.load(f)
+        print(f"  ✅ Knowledge base bundled ({len(docs)} documents)")
+    else:
+        print("  ⚠️ No knowledge base found at knowledge_base/knowledge.json")
 
-    print(f"\n🎉 DONE! Copy the '{bundle_path}' folder into your mobile app project.")
+    # 5. Export Mobile Manifest & Config
+    cfg_file = Path("config.yaml")
+    if cfg_file.exists():
+        shutil.copy(cfg_file, bundle_path / "config.yaml")
+    
+    manifest = {
+        "model_name": "Kruuboo-SLM-0.2",
+        "parameters": "105.4M",
+        "quantization": "INT8",
+        "d_model": 768,
+        "n_heads": 12,
+        "n_layers": 14,
+        "d_ff": 3072,
+        "max_seq_len": 1024,
+        "vocab_size": 8192,
+        "special_tokens": {
+            "pad": "<pad>",
+            "bos": "<|im_start|>",
+            "eos": "<|im_end|>"
+        }
+    }
+    with open(bundle_path / "manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    print("  ✅ Mobile metadata manifest written")
+
+    print(f"\n🎉 DONE! Mobile bundle ready in '{bundle_path}'.")
 
 if __name__ == "__main__":
     prepare_bundle()

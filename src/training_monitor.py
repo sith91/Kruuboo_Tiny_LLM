@@ -13,7 +13,7 @@ import math
 import queue
 import threading
 from pathlib import Path
-from typing import List, Dict, Optional, Generator
+from typing import List, Dict, Optional, Generator, Callable
 
 import torch
 import yaml
@@ -48,6 +48,7 @@ class TrainingMonitor:
         self.tokens_processed = 0
         self.best_val_loss = float("inf")
         self.dataset_source = "knowledge_base"
+        self.on_training_complete: Optional[Callable] = None
 
         # History arrays for UI charts
         self.history: List[Dict] = []
@@ -253,6 +254,15 @@ class TrainingMonitor:
                 with self.lock:
                     self.status = "finished" if not self._stop_requested.is_set() else "idle"
                 self.log_message("✅ Training session finished successfully.")
+
+                # Hot-reload updated model weights if hook registered
+                if self.on_training_complete and callable(self.on_training_complete):
+                    try:
+                        self.log_message("🔄 Triggering automatic model hot-reload in runtime...")
+                        self.on_training_complete()
+                        self.log_message("✅ Runtime session refreshed with newly trained weights.")
+                    except Exception as reload_err:
+                        self.log_message(f"⚠️ Hot-reload notice: {reload_err}")
             except Exception as e:
                 with self.lock:
                     self.status = "error"

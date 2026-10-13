@@ -26,7 +26,7 @@ def generate_self_play_dataset(output_path: str = "training_data/rstar_reasoning
     rag = RAGSystem("models/tiny_llm_quantized.onnx", "tokenizer.json", max_seq_len=512)
     rstar = RStarEngine(rag._engine, rag.tokenizer, max_seq_len=512)
 
-    # Seed questions across domains
+    # Seed questions across diverse topics
     seed_questions = [
         "What is the best home remedy for a severe headache?",
         "How should one treat a sudden fever without pills?",
@@ -35,16 +35,13 @@ def generate_self_play_dataset(output_path: str = "training_data/rstar_reasoning
         "What natural remedies relieve an upset stomach quickly?",
         "How do you signal for help when stranded in the wilderness?",
         "What constitutes a legally binding oral contract?",
-        "What is the recommended treatment for a minor kitchen burn?"
+        "What is the recommended treatment for a minor kitchen burn?",
+        "What is artificial intelligence and how does machine learning work?",
+        "How do you calculate compound interest over 5 years?",
+        "What are the best practices for personal cybersecurity?"
     ]
 
-    # Gather additional questions from domain registry
-    for domain in rag.get_available_domains():
-        for ex_q in domain.get("example_questions", []):
-            if ex_q not in seed_questions:
-                seed_questions.append(ex_q)
-
-    print(f"📋 Generating self-play reasoning chains for {len(seed_questions)} domain topics...\n")
+    print(f"📋 Generating self-play reasoning chains for {len(seed_questions)} topics...\n")
 
     verified_samples = []
 

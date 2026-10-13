@@ -2,6 +2,8 @@ import json
 import time
 import logging
 import re
+import ast
+import operator
 from pathlib import Path
 from typing import Callable, List, Dict, Tuple, Optional
 
@@ -19,6 +21,67 @@ from .greetings import (
 )
 from .search import hybrid_search
 from .native_encoder import NativeSLMEncoder
+
+SAFE_MATH_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _eval_math_node(node):
+    if isinstance(node, ast.Num):
+        return node.n
+    elif isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    elif isinstance(node, ast.BinOp) and type(node.op) in SAFE_MATH_OPS:
+        left = _eval_math_node(node.left)
+        right = _eval_math_node(node.right)
+        return SAFE_MATH_OPS[type(node.op)](left, right)
+    elif isinstance(node, ast.UnaryOp) and type(node.op) in SAFE_MATH_OPS:
+        operand = _eval_math_node(node.operand)
+        return SAFE_MATH_OPS[type(node.op)](operand)
+    raise ValueError("Unsafe or non-arithmetic node")
+
+
+def solve_arithmetic_query(text: str) -> Optional[str]:
+    """Safely solve direct arithmetic questions (e.g. '1+1', 'what is 25 * 4', 'calculate 100/5')."""
+    clean = text.lower().strip("?.! \t\n")
+    prefixes = [
+        r"^i\s+need\s+to\s+know\s+what\s+is\s+",
+        r"^can\s+you\s+tell\s+me\s+what\s+is\s+",
+        r"^tell\s+me\s+what\s+is\s+",
+        r"^what\s+is\s+",
+        r"^whats\s+",
+        r"^calculate\s+",
+        r"^solve\s+",
+        r"^how\s+much\s+is\s+",
+        r"^evaluate\s+",
+        r"^what\s+does\s+",
+        r"^equal\s+"
+    ]
+    for pat in prefixes:
+        clean = re.sub(pat, "", clean).strip()
+
+    clean = clean.replace("equals", "").replace("equal", "").strip("?.! \t\n")
+    expr = clean.replace("^", "**").replace("x", "*").replace("×", "*").replace("÷", "/")
+
+    if re.fullmatch(r"[\d\s\+\-\*\/\%\(\)\.]+", expr) and any(c in expr for c in "+-*/%"):
+        try:
+            tree = ast.parse(expr, mode="eval")
+            val = _eval_math_node(tree.body)
+            if isinstance(val, float) and val.is_integer():
+                val = int(val)
+            return f"{clean} is {val}."
+        except Exception:
+            return None
+    return None
 
 from ..tokenizer import TinyTokenizer
 from ..inference import InferenceEngine
@@ -52,6 +115,8 @@ class RAGSystem:
         max_seq_len: int = None,
     ):
         # 1. Load ONNX LLM
+        self.model_path = model_path
+        self.tokenizer_path = tokenizer_path
         logger.info(f"Loading ONNX model from {model_path}")
         try:
             self.session = ort.InferenceSession(model_path)
@@ -95,11 +160,44 @@ class RAGSystem:
 
         logger.info(f"Unified Conversational SLM initialized (Context: {self.max_seq_len} tokens, Knowledge: {len(self.documents)} docs)")
 
+    def reload_model(self, model_path: Optional[str] = None) -> bool:
+        """
+        Hot-reload updated ONNX model weights and refresh the inference engine & native encoder.
+        """
+        target_path = model_path or self.model_path
+        logger.info(f"🔄 Hot-reloading ONNX model session from: {target_path}")
+        try:
+            new_session = ort.InferenceSession(target_path)
+            input_meta = new_session.get_inputs()[0]
+            self.input_name = input_meta.name
+            shape = input_meta.shape
+            if len(shape) > 1 and isinstance(shape[1], int) and shape[1] > 0:
+                self.max_seq_len = shape[1]
+
+            self.session = new_session
+            self.model_path = target_path
+
+            # Re-create InferenceEngine
+            self._engine = InferenceEngine(
+                session=self.session,
+                tokenizer=self.tokenizer,
+                input_name=self.input_name,
+                max_seq_len=self.max_seq_len,
+            )
+
+            # Invalidate encoder cache to load new PyTorch weights if native
+            self._encoder = None
+            logger.info("✅ Model hot-reload successful. New weights active in memory.")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to hot-reload model from {target_path}: {e}")
+            return False
+
     @property
     def encoder(self):
         if self._encoder is None:
             if self.embedding_model_name in ["native", "tiny_llm", "kruuboo", "slm"]:
-                logger.info("Initializing Kruuboo-SLM-0.1 Native SLM Encoder (768d)...")
+                logger.info("Initializing Kruuboo-SLM-0.2 Native SLM Encoder (768d)...")
                 self._encoder = NativeSLMEncoder(
                     model_path="models/tiny_llm.pt",
                     tokenizer_path="tokenizer.json"
@@ -201,29 +299,34 @@ class RAGSystem:
         history: Optional[List[Dict]],
         max_prompt_budget: int
     ) -> str:
-        """Assemble multi-turn ChatML prompt with sliding dialogue window."""
+        """Assemble multi-turn ChatML prompt with sliding turn-by-turn dialogue window."""
         system_turn = f"<|im_start|>system\n{system_msg}<|im_end|>\n"
         user_turn = f"<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n"
 
-        if not history:
+        base_tokens = len(self.tokenizer.encode(system_turn + user_turn))
+        if base_tokens >= max_prompt_budget or not history:
             return system_turn + user_turn
 
-        built_history = []
-        for turn in reversed(history[-6:]):
+        allowed_turns = []
+        current_tokens = base_tokens
+
+        # Slide backwards through history turn-by-turn preserving most recent context
+        for turn in reversed(history[-8:]):
             role = turn.get("role", "user")
             content = turn.get("content", "").strip()
             if not content:
                 continue
-            built_history.insert(0, f"<|im_start|>{role}\n{content}<|im_end|>\n")
+            turn_str = f"<|im_start|>{role}\n{content}<|im_end|>\n"
+            turn_tokens = len(self.tokenizer.encode(turn_str))
 
-        prompt = system_turn + "".join(built_history) + user_turn
-        # Token length budget check
-        token_ids = self.tokenizer.encode(prompt)
-        if len(token_ids) > max_prompt_budget:
-            # Fallback to minimal prompt if budget exceeded
-            prompt = system_turn + user_turn
+            if current_tokens + turn_tokens <= max_prompt_budget:
+                allowed_turns.insert(0, turn_str)
+                current_tokens += turn_tokens
+            else:
+                # Reached token budget limit, stop adding older turns
+                break
 
-        return prompt
+        return system_turn + "".join(allowed_turns) + user_turn
 
     def generate(
         self,
@@ -317,13 +420,28 @@ class RAGSystem:
                 "temperature_used": 0.7,
             }
 
-        # 4. Semantic Knowledge Retrieval (Native 768d Hybrid RAG)
+        # 4. Direct Arithmetic & Math Expression Resolution
+        math_solution = solve_arithmetic_query(question)
+        if math_solution:
+            return {
+                "answer": math_solution,
+                "knowledge_used": 0,
+                "retrieved_context": [],
+                "temperature_used": 0.0,
+            }
+
+        # 5. Semantic Knowledge Retrieval (Native 768d Hybrid RAG)
         search_query = self._resolve_query_context(question, history)
         retrieved_with_scores = self.search(search_query, k=3)
-        confident_matches = [item for item in retrieved_with_scores if item[1] >= 0.40]
-        retrieved = [doc for doc, _ in confident_matches]
+        seen_texts = set()
+        retrieved = []
+        for doc, score in retrieved_with_scores:
+            clean_doc_text = doc.text.strip()
+            if score >= 0.40 and clean_doc_text not in seen_texts:
+                seen_texts.add(clean_doc_text)
+                retrieved.append(doc)
 
-        # 5. System persona & emotional valence
+        # 6. System persona & emotional valence
         system_msg = "You are Kruuboo SLM, a helpful, knowledgeable, and empathetic AI assistant."
         try:
             from src.feeling import update_mood, get_mood_instruction
@@ -333,25 +451,39 @@ class RAGSystem:
         except Exception:
             self.current_mood = None
 
-        # 6. Response Synthesis
+        # 6. Response Synthesis (Neural Generation with Grounded Context)
+        max_budget = max(64, self.max_seq_len - 140)
+
         if retrieved:
-            # Grounded knowledge response
-            answer = retrieved[0].text
-            temp = 0.2
+            # Grounded Neural Synthesis: Condition the model on retrieved facts
+            context_text = "\n".join([f"• {d.text}" for d in retrieved[:3]])
+            grounded_system = (
+                f"{system_msg}\n\n"
+                f"Relevant Knowledge Context:\n{context_text}\n\n"
+                "Answer the user's question accurately using the context above. Keep explanations clear and conversational."
+            )
+            temp = 0.35
+            prompt = self._build_budgeted_prompt(grounded_system, question, history, max_budget)
+            answer = self.generate(prompt, max_tokens=140, temperature=temp, min_p=0.05)
+
+            # Fallback to direct fact if neural output is degenerate or empty
+            if not answer or len(answer.strip().split()) < 3:
+                answer = retrieved[0].text
         else:
-            # Natural Neural Generation with Min-P sampling
+            # Natural Open-Ended Generation with Min-P sampling
             temp = 0.65
-            user_msg = question
-            max_budget = max(64, self.max_seq_len - 120)
-            prompt = self._build_budgeted_prompt(system_msg, user_msg, history, max_budget)
-            answer = self.generate(prompt, temperature=temp, min_p=0.05)
+            prompt = self._build_budgeted_prompt(system_msg, question, history, max_budget)
+            answer = self.generate(prompt, max_tokens=120, temperature=temp, min_p=0.05)
 
         # 7. Anti-Repetition Guardrail
         words = answer.split()
         if len(words) > 8:
             unique_ratio = len(set(words)) / len(words)
             if unique_ratio < 0.35 or words.count("given") >= 3 or words.count("the") > len(words) * 0.38:
-                answer = "I am Kruuboo Tiny LLM. I can help answer questions across medical, legal, survival, math, and conversational topics. What would you like to know?"
+                if retrieved:
+                    answer = retrieved[0].text
+                else:
+                    answer = "I am Kruuboo Tiny LLM. I can help answer questions across medical, legal, survival, math, and conversational topics. What would you like to know?"
 
         return {
             "answer": answer,
@@ -360,12 +492,6 @@ class RAGSystem:
             "temperature_used": temp,
             "mood": self.current_mood.to_dict() if getattr(self, "current_mood", None) else None,
         }
-
-    # Backward compatibility alias
-    def ask_with_domain(self, question: str, auto_detect: bool = True, history: List[Dict] = None) -> Dict:
-        res = self.ask(question, history=history)
-        res["domain_name"] = "Conversational AI"
-        return res
 
     def research_and_learn(self, query: str) -> bool:
         """Online web research and on-the-fly ingestion."""

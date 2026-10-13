@@ -2,7 +2,7 @@
 Main CLI — Conversational Assistant Shell for Kruuboo Tiny LLM
 ===============================================================
 
-Interactive terminal shell powered by Kruuboo-SLM-0.1 (105.4M Parameters)
+Interactive terminal shell powered by Kruuboo-SLM-0.2 (105.4M Parameters)
 with unified semantic RAG and sliding dialogue memory.
 """
 
@@ -31,7 +31,7 @@ class ConversationalCLI:
 
     def show_header(self):
         print("\n" + "=" * 70)
-        print("🧠 KRUUBOO TINY LLM (SLM-0.1) — CONVERSATIONAL SHELL")
+        print("🧠 KRUUBOO TINY LLM (SLM-0.2) — CONVERSATIONAL SHELL")
         print("   105.4M Transformer Decoder with Native 768d Semantic RAG")
         print("=" * 70)
         stats = self.rag.get_stats()

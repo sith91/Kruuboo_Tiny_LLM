@@ -16,10 +16,12 @@ STOPWORDS = {
     'i', 'he', 'she', 'we', 'us', 'him', 'her', 'his', 'our', 'ours', 'theirs', 'myself', 'himself',
     'herself', 'itself', 'yourself', 'yourselves', 'themselves',
     'day', 'today', 'tomorrow', 'yesterday', 'now', 'will', 'was', 'were', 'get', 'got', 'go', 'going',
-    'went', 'make', 'making', 'need', 'needs', 'find', 'finding', 'take', 'taking', 'give', 'giving',
-    'like', 'likes', 'think', 'thinking', 'look', 'looking', 'come', 'coming', 'use', 'using', 'want',
-    'wants', 'tell', 'telling', 'say', 'saying', 'said', 'ask', 'asking', 'write', 'writing', 'read',
-    'reading', 'some', 'any', 'all', 'none', 'one', 'two', 'new', 'old', 'good', 'bad', 'hows'
+    'went', 'make', 'making', 'need', 'needs', 'needed', 'know', 'knows', 'knowing', 'knew', 'known',
+    'find', 'finding', 'take', 'taking', 'give', 'giving', 'like', 'likes', 'think', 'thinking',
+    'look', 'looking', 'come', 'coming', 'use', 'using', 'want', 'wants', 'wanted', 'tell', 'telling',
+    'say', 'saying', 'said', 'ask', 'asking', 'write', 'writing', 'read', 'reading', 'some', 'any',
+    'all', 'none', 'one', 'two', 'new', 'old', 'good', 'bad', 'hows', 'calculate', 'solve', 'answer',
+    'explain', 'info', 'information', 'details', 'detail', 'mean', 'meaning', 'much', 'many', 'just'
 }
 
 def hybrid_search(
@@ -36,11 +38,9 @@ def hybrid_search(
     if not documents:
         return [], False
 
-    # 1. Calculate Keyword overlap score
-    query_words = set(re.findall(r'\w+', query.lower()))
-    keywords = query_words - STOPWORDS
-    if not keywords:
-        keywords = query_words
+    # 1. Calculate Keyword overlap score (ignoring stopwords and isolated numbers)
+    raw_tokens = set(re.findall(r'\b[a-zA-Z0-9_\-]+\b', query.lower()))
+    keywords = {w for w in (raw_tokens - STOPWORDS) if not (w.isdigit() and len(w) <= 2) and len(w) > 1}
 
     # 2. Get vector embedding for the query
     try:

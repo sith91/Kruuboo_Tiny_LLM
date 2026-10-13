@@ -4,17 +4,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from src.rag import RAGSystem
 
-# Must match config.yaml model.max_seq_len and src/train.py BLOCK_SIZE
-MODEL_MAX_SEQ_LEN = 128
+import yaml
+
+with open("config.yaml", "r") as f:
+    cfg = yaml.safe_load(f)
+MODEL_MAX_SEQ_LEN = cfg.get("model", {}).get("max_seq_len", 1024)
 
 def test():
     print("Initializing...")
     rag = RAGSystem("models/tiny_llm_quantized.onnx", "tokenizer.json",
                     max_seq_len=MODEL_MAX_SEQ_LEN)
     print("Asking...")
-    # Small max_tokens for speed
-    response = rag.ask_with_domain("What is ML?", auto_detect=False)
-    print("Raw response:", response)
+    response = rag.ask("What is machine learning?")
+    print("Response:", response.get("answer"))
 
 if __name__ == "__main__":
     test()

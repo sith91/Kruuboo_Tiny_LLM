@@ -1,28 +1,37 @@
-# 🎯 Kruuboo Tiny LLM (SLM-0.1) — Unified Conversational SLM & Native RAG
+# 🎯 Kruuboo Tiny LLM (SLM-0.2) — Unified Conversational SLM & Native RAG
 
-A high-capacity, privacy-first Small Language Model (SLM) platform combining a custom-trained **105.4M Parameter Transformer Decoder** (~100 MB INT8 footprint with **RoPE**, **SwiGLU**, **1,024 Context Memory**, and **Flash Attention**) with a **Native 768d Semantic RAG Memory**, **Min-P Sampling**, and an interactive **Live Learning Visualizer & Training Studio**.
+A high-capacity, privacy-first Small Language Model (SLM) platform combining a custom-trained **105.4M Parameter Transformer Decoder** (~100 MB INT8 footprint with **RoPE**, **SwiGLU**, **1,024 Context Memory**, and **Flash Attention**) with a **Native 768d Semantic RAG Memory**, a **Multi-Provider Web Research Fallback Chain**, **Direct Arithmetic Resolution**, **Min-P Sampling**, and an interactive **Live Learning Visualizer & Training Studio**.
 
-Kruuboo-SLM-0.1 operates as a **single unified conversational agent** — responding naturally to general dialogue, personal introductions, medical remedies, legal advice, and survival scenarios without rigid domain gating or external third-party dependencies.
+Kruuboo-SLM-0.2 operates as a **single unified conversational agent** — responding naturally to general dialogue, personal memory recall, medical remedies, legal agreements, survival techniques, and scientific calculations without rigid domain gating or external third-party dependencies.
 
 ---
 
 ## 🌟 Key Architectural Highlights
 
 - **105.4M Parameter High-Capacity SLM**: Built from scratch with an optimized 14-layer transformer architecture, offering an ideal balance between reasoning capacity and edge runtime efficiency (~100 MB INT8 / ~210 MB FP16).
-- **Unified Conversational Chat (Zero Domain Silos)**: Replaced brittle rule-based domain selectors with unified **ChatML** multi-turn dialogue memory. The model conversationally answers questions across all domains using its weights and global semantic memory.
+- **Unified Conversational Dialogue (Zero Domain Silos)**: Replaced brittle rule-based domain selectors with unified **ChatML** multi-turn dialogue memory. The model conversationally answers questions across all domains using its weights and global semantic memory.
 - **Native 768d Semantic RAG Encoder**: Self-contained RAG retrieval powered directly by the 14-layer transformer decoder (`ln_f(h)`). Eliminates external dependencies on Hugging Face / `sentence-transformers` and unifies the embedding and vocabulary space ($V=8,192, d_{\text{model}}=768$).
+- **Multi-Provider Web Research Fallback Chain (`src/web_researcher.py`)**:
+  - Automatically queries a priority fallback chain when knowledge gaps are detected or upon `/research` command:
+    1. **Wolfram Alpha**: Computational intelligence, mathematics, scientific equations, and units.
+    2. **DuckDuckGo**: Instant answers, definitions, and zero-click web summaries (unauthenticated).
+    3. **Wikipedia**: Deep encyclopedic article summaries and background context.
+    4. **ArXiv**: Academic papers, machine learning preprints, and scientific abstracts.
+- **Direct Arithmetic & Calculation Engine (`src/rag/system.py`)**:
+  - Deterministic arithmetic solver (`solve_arithmetic_query`) resolves expressions (`2 + 2`, `45 * 12`, `100 / 4`) instantly with zero latency and zero hallucination risk.
 - **Modern Min-P Sampling & Contextual Temperature**:
-  - **Min-P Sampling** ($p_{\text{base}} = 0.05$): Dynamically scales token pruning relative to top-token confidence ($p \ge p_{\text{max}} \times 0.05$), eliminating low-probability hallucinations while allowing rich conversational vocabulary.
-  - **Dynamic Contextual Temperature**: Automatically scales between $T = 0.2$ for factual retrieval and $T = 0.65$ for natural conversational flow.
-- **Live Learning Monitor & Visualizer (Web UI)**: Interactive telemetry dashboard on `http://localhost:8000` with real-time Chart.js loss/perplexity curves, token throughput speed (tok/s), cosine LR schedule tracking, on-the-go fine-tuning controls, and weight probing cards.
-- **State-of-the-Art Transformer Building Blocks**:
-  - **Rotary Position Embeddings (RoPE)** for length extrapolation without position table limits.
-  - **SwiGLU Gated Feed-Forward Networks** for superior representational density.
-  - **Flash Attention** via PyTorch 2.0+ `scaled_dot_product_attention` fused kernels.
-  - **Pre-LayerNorm** and **GPT-2 style scaled residual initialization**.
-  - **Tied Input-Output Weights** for parameter efficiency.
-- **SFT ChatML Training with Target-Only Loss Masking**: Masks system instructions and user queries (`labels = -100`), calculating loss exclusively on assistant response tokens.
-- **Affective Sentiment & Mood Tracking**: Real-time emotional valence tracking and persistent state updates (`workspace/mood_state.json`) for empathetic persona modulation.
+  - **Min-P Sampling** ($p_{\text{base}} = 0.05$): Dynamically scales token pruning relative to top-token confidence ($p \ge p_{\text{max}} \times 0.05$), eliminating tail hallucinations while preserving rich vocabulary.
+  - **Contextual Temperature**: Automatically scales between $T = 0.35$ for grounded retrieval synthesis and $T = 0.65$ for creative open-ended dialogue.
+- **In-Memory Model Hot-Reloading (`/api/model/reload`)**:
+  - Dynamically updates active ONNX sessions and invalidates encoder caches without restarting the FastAPI server or disconnecting active clients.
+- **Unified Ingestion Pipeline (`scripts/ingest.py`)**:
+  - Replaces legacy fragmented scripts with a single universal ingestion CLI supporting `.json`, `.csv`, `.txt`, `.md`, entire directories, batch files, and direct CLI text.
+- **Live Learning Studio & Telemetry Dashboard (`server.py`)**:
+  - Glassmorphic Web UI at `http://localhost:8000` with Server-Sent Events (SSE) streaming real-time loss/perplexity curves, token throughput (tok/s), cosine LR schedule tracking, on-the-go fine-tuning controls, and weight probing cards.
+- **Affective Sentiment & Emotional State Tracker (`src/feeling.py`)**:
+  - Dynamic valence tracking across dialogue turns, persisting emotional state to `workspace/mood_state.json` and adapting system persona empathy.
+- **Mobile Edge Deployment Bundle (`scripts/prepare_mobile_bundle.py`)**:
+  - Automated packager for INT8 quantized ONNX, BPE tokenizer, and semantic knowledge base for iOS CoreML / Android ONNX Runtime edge execution.
 
 ---
 
@@ -30,12 +39,12 @@ Kruuboo-SLM-0.1 operates as a **single unified conversational agent** — respon
 
 | Hyperparameter / Feature | Specification | Architectural Rationale |
 | :--- | :--- | :--- |
-| **Model Name** | `Kruuboo-SLM-0.1` (`tiny_llm`) | Custom decoder-only autoregressive transformer |
+| **Model Name** | `Kruuboo-SLM-0.2` (`tiny_llm`) | Custom decoder-only autoregressive transformer |
 | **Total Parameters** | **105,426,432 (~105.4M)** | High-capacity small language model |
 | **Layers ($N_{\text{layers}}$)** | **14 Transformer Blocks** | Deep hierarchical reasoning and dense representation |
 | **Hidden Dim ($d_{\text{model}}$)** | **768** | High-capacity representation size |
 | **Attention Heads ($N_{\text{heads}}$)**| **12 Heads** | Head dimension $d_{\text{head}} = 64$ ($768 / 12$) |
-| **FFN Intermediate Dim ($d_{\text{ff}}$)**| **3072** ($\approx \frac{2}{3} d_{\text{ff}} = 2048$ SwiGLU) | Swish-gated linear projections ($W_1, W_2, W_3$) |
+| **FFN Intermediate Dim ($d_{\text{ff}}$)**| **3,072** ($\approx \frac{2}{3} d_{\text{ff}} = 2048$ SwiGLU) | Swish-gated linear projections ($W_1, W_2, W_3$) |
 | **Context Window ($T_{\text{max}}$)** | **1,024 Tokens** | Extended multi-turn context and RAG memory window |
 | **Vocabulary Size ($V$)** | **8,192 Subwords** | Byte-Pair Encoding (BPE) with ChatML special tokens |
 | **Positional Encoding** | **RoPE (Rotary Position Embeddings)** | Frequency base $\theta = 10,000$; supports dynamic sequence lengths |
@@ -53,19 +62,27 @@ Kruuboo-SLM-0.1 operates as a **single unified conversational agent** — respon
 
 ```mermaid
 graph TD
-    UserQuery([User Input / Message]) --> Mood[Sentiment & Emotional Valence Tracker]
-    UserQuery --> ContextResolver[Sliding Context & Coreference Resolver]
+    UserQuery([User Input / Message]) --> Mood[Sentiment & Affective State Tracker]
+    UserQuery --> MathCheck{Arithmetic Query?}
     
+    MathCheck -- Yes --> MathSolver[Direct Arithmetic Engine: 0ms Latency]
+    MathSolver --> AssistantReply([Conversational Grounded Response])
+    
+    MathCheck -- No --> ContextResolver[Sliding Context & Coreference Resolver]
     ContextResolver --> NativeEncoder[Native SLM 768d Encoder: src/rag/native_encoder.py]
     NativeEncoder --> HybridSearch[Hybrid Semantic Search: 65% Lexical + 35% 768d Cosine]
     
-    HybridSearch --> GlobalKB[(Global Semantic Memory: 758+ Docs)]
-    GlobalKB --> RetrievedContext[Retrieved Grounded Evidence]
+    HybridSearch --> GlobalKB[(Global Semantic Memory: 750+ Docs)]
+    GlobalKB --> ConfCheck{Confident Match? score >= 0.40}
+    
+    ConfCheck -- Yes --> RetrievedContext[Retrieved Grounded Evidence]
+    ConfCheck -- No --> WebFallback[Multi-Provider Fallback Chain: Wolfram / DDG / Wiki / ArXiv]
+    WebFallback --> RetrievedContext
     
     RetrievedContext --> ChatMLBuilder[ChatML Multi-Turn Prompt Builder]
     UserQuery --> ChatMLBuilder
     
-    subgraph Kruuboo-SLM-0.1 Neural Engine (105.4M Parameters)
+    subgraph Kruuboo-SLM-0.2 Neural Engine (105.4M Parameters)
         ChatMLBuilder --> Tokenizer[BPE Tokenizer: 8,192 Vocab + ChatML]
         Tokenizer --> RoPE[RoPE Rotary Embeddings]
         RoPE --> Blocks[14x Transformer Blocks: FlashAttn + SwiGLU]
@@ -73,11 +90,12 @@ graph TD
         Norm --> MinP[Min-P Sampler: p_base = 0.05, Contextual Temp]
     end
     
-    MinP --> AssistantReply([Conversational Grounded Response])
+    MinP --> AssistantReply
     
-    subgraph Live Learning Studio & Telemetry
+    subgraph Live Learning Studio & Hot-Reload Loop
         LiveMonitor[Web UI Live Visualizer] <-->|SSE Stream: /api/training/events| Trainer[SFT Trainer: Target-Only Loss Masking]
-        Trainer -.->|Weight Updates| Blocks
+        Trainer -.->|Export ONNX| Disk[models/tiny_llm.onnx]
+        Disk -.->|Hot Reload: /api/model/reload| Blocks
     end
 ```
 
@@ -86,25 +104,34 @@ graph TD
 ## 🛡️ Core System Components
 
 ### 1. Neural Transformer (`src/model.py`)
-- **RoPE & SwiGLU**: Implements rotary position embedding calculation and SwiGLU gating for fast convergence and high expressiveness.
+- **RoPE & SwiGLU**: Implements rotary position embeddings and SwiGLU gating for fast convergence and high expressiveness.
 - **Native Embedding Extraction**: Exposes `forward_features()` and `get_embeddings()` using post-LayerNorm hidden states with mean-pooling and L2 normalization for self-contained RAG retrieval.
 - **Flash Attention**: Accelerated scaled dot-product attention kernels natively running on Apple Silicon (MPS), NVIDIA CUDA, and vectorized CPU.
 
 ### 2. Unified Native RAG & Hybrid Search (`src/rag/`)
 - **`NativeSLMEncoder` (`src/rag/native_encoder.py`)**: Self-contained embedding retriever running on the same weights and 8,192 vocabulary as the language model.
-- **`hybrid_search` (`src/rag/search.py`)**: Vectorized cosine similarity computation combined with robust lexical matching, preventing semantic noise from dominating factual matches.
-- **Sliding Multi-Turn Context**: Preserves dialogue turns and resolves conversational follow-ups (e.g. *"What is my name?"* or *"How to treat it?"*).
+- **`hybrid_search` (`src/rag/search.py`)**: Vectorized cosine similarity computation combined with robust lexical matching ($S = 0.65 S_{\text{lex}} + 0.35 S_{\text{sem}}$).
+- **Turn-by-Turn Sliding Context**: Dynamically slides backwards through dialogue history preserving most recent turns within token budget.
+- **Hot-Reload Support**: `rag.reload_model()` updates ONNX sessions in memory without downtime.
 
-### 3. Min-P Inference Engine (`src/inference.py`)
-- Implements autoregressive generation with dynamic **Min-P sampling** ($p_{\text{base}} = 0.05$), repetition penalties, and real-time token streaming callbacks.
+### 3. Multi-Provider Web Research (`src/web_researcher.py`)
+- Fallback chain configuration in `config.yaml`:
+  - **Wolfram Alpha**: Math & scientific equations.
+  - **DuckDuckGo**: Instant answers, definitions, and zero-click web summaries.
+  - **Wikipedia**: In-depth encyclopedic context.
+  - **ArXiv**: Academic papers and scientific research preprints.
 
-### 4. SFT Training & Loss Masking (`src/train.py`)
-- **Target-Only Loss Masking**: Sets system/user token labels to `-100`, focusing optimization strictly on assistant answers.
+### 4. Min-P Inference Engine (`src/inference.py`)
+- Autoregressive generation with dynamic **Min-P sampling** ($p_{\text{base}} = 0.05$), repetition penalties ($1.15$), and real-time token streaming callbacks.
+
+### 5. SFT Training & Loss Masking (`src/train.py`)
+- **Target-Only Loss Masking**: Sets system and user token labels to `-100`, optimizing loss strictly over assistant response tokens.
 - **Cosine Schedule with Linear Warmup**: Peak learning rate $\eta_{\text{max}} = 3\times 10^{-4}$ decaying to $\eta_{\text{min}} = 1\times 10^{-5}$ with AdamW decoupled weight decay ($0.1$).
 
-### 5. Live Learning Studio & Web UI (`server.py`)
+### 6. Live Learning Studio & Web UI (`server.py`)
 - **Conversational Chat Tab**: Clean, glassmorphic ChatGPT/Claude-style chat with markdown rendering, streaming responses, and source transparency.
 - **Live Learning Monitor Tab**: Real-time SSE telemetry charts displaying training/validation loss, perplexity ($e^{\text{loss}}$), throughput (tok/s), and real-time probe generation cards.
+- **Knowledge Upload**: Multi-format file uploader (`/upload`) parsing JSON/TXT datasets and creating chunked native embeddings on the fly.
 
 ---
 
@@ -114,33 +141,54 @@ graph TD
 tiny_llm_rag_project/
 ├── config.yaml                     # Model hyperparams (105.4M, 14 layers, 1024 seq_len), RAG & training settings
 ├── requirements.txt                # Python dependencies
-├── main.py                         # Unified conversational terminal CLI
+├── main.py                         # Unified conversational terminal CLI (SLM-0.2)
 ├── server.py                       # FastAPI server & Web UI (Chat + Live Learning Monitor)
+├── create_everything.py            # Master bootstrap and end-to-end verification script
+├── test_speed.py                   # Latency and token throughput benchmark
+├── tokenizer.json                  # Byte-Pair Encoding (BPE) 8,192 vocabulary
+│
+├── docs/                           # Comprehensive technical documentation
+│   ├── ARCHITECTURE.md             # In-depth architectural & mathematical specifications
+│   ├── API_REFERENCE.md            # REST API endpoints, SSE streams, and payload specs
+│   ├── INGESTION_GUIDE.md          # Unified ingestion CLI user guide & schemas
+│   └── WEB_RESEARCH_GUIDE.md       # Fallback provider chain setup & query pipeline
 │
 ├── src/
 │   ├── model.py                    # 105.4M Transformer Decoder (RoPE, SwiGLU, FlashAttn, Native Embeddings)
 │   ├── tokenizer.py                # BPE Subword Tokenizer (8,192 vocab, ChatML special tokens)
 │   ├── inference.py                # Autoregressive generation with Min-P sampling and contextual temperature
-│   ├── rstar.py                    # rStar mutual reasoning self-play engine
 │   ├── train.py                    # SFT training pipeline with target-only loss masking and step callbacks
+│   ├── training_monitor.py         # SSE telemetry bus, background worker, and live model probing
 │   ├── feeling.py                  # Sentiment analysis, affective state & mood tracker
-│   ├── web_researcher.py           # Real-time web scraping and dynamic knowledge ingestion
+│   ├── web_researcher.py           # Multi-provider fallback web researcher (Wolfram/DDG/Wiki/ArXiv)
+│   ├── rstar.py                    # rStar mutual reasoning engine
 │   └── rag/
-│       ├── system.py               # Unified conversational RAG coordinator and dialogue manager
+│       ├── system.py               # Unified conversational RAG coordinator, math solver & hot-reloading
 │       ├── native_encoder.py       # Self-contained 768d SLM dense vector encoder
 │       ├── search.py               # Hybrid lexical + 768d vector cosine search
 │       ├── greetings.py            # Conversational greetings, persona, and name memory resolution
 │       └── document.py             # Document data structures and serialization
 │
 ├── scripts/
+│   ├── ingest.py                   # Unified Universal Ingestion CLI (.json, .csv, .txt, .md, directories)
+│   ├── prepare_mobile_bundle.py    # Export self-contained INT8 bundle for iOS/Android
+│   ├── generate_coherent.py        # ONNX command-line generation test utility
+│   ├── extract_behavioral.py       # Behavioral dataset extractor from ZIP archives
+│   ├── export_onnx.py              # Export PyTorch model to INT8 & FP16 ONNX format
 │   ├── rstar_self_play.py          # Synthetic reasoning dataset generator via self-play
-│   ├── export_onnx.py              # Export PyTorch model to optimized ONNX format
-│   ├── download_datasets.py        # Dataset downloader and formatter
-│   └── build_knowledge_base.py     # Global semantic knowledge base indexer
+│   ├── download_datasets.py        # Curated dataset downloader and formatter
+│   ├── download_nsfw_roleplay.py   # Conversational roleplay dataset downloader
+│   ├── cleanup_knowledge.py        # Knowledge base deduplication and cleanup utility
+│   ├── continual_daemon.py         # Background continual learning watcher
+│   └── run_continual_learning.sh   # Continual learning daemon launcher script
 │
-├── training_data/                  # SFT training datasets (.json, .txt)
+├── hardware/
+│   └── real_hardware.py            # Hardware detection (MPS, CUDA, CPU) and thermal telemetry
+│
+├── models/                         # PyTorch checkpoints and ONNX graphs (.pt, .onnx)
 ├── knowledge_base/                 # Global semantic documents and metadata (knowledge.json)
-└── workspace/                      # Dynamic runtime telemetry and mood state
+├── training_data/                  # SFT training datasets (.json, .csv, .txt)
+└── workspace/                      # Telemetry logs, training metrics, and mood state
 ```
 
 ---
@@ -154,17 +202,25 @@ Ensure Python 3.9+ is installed:
 pip install -r requirements.txt
 ```
 
-### 2. Run the Web Application & Live Learning Studio
+### 2. Master Bootstrap & Verification
+
+To verify or initialize the complete system (tokenizer, models, knowledge base, ONNX graphs):
+```bash
+python3 create_everything.py
+```
+
+### 3. Run the Web Application & Live Learning Studio
 
 Start the local server and web UI:
 ```bash
 python3 server.py
 ```
 Open **`http://localhost:8000`** in your browser:
-- **Conversational Chat**: Interactive multi-turn chat with grounded semantic memory.
+- **Conversational Chat**: Interactive multi-turn chat with grounded semantic memory and instant arithmetic.
 - **Live Learning Monitor**: Watch real-time loss and perplexity curves, monitor token speed, and launch on-the-go fine-tuning.
+- **Knowledge Upload**: Drag-and-drop `.json`, `.csv`, `.txt`, or `.md` files to ingest on-the-fly.
 
-### 3. Run the Interactive CLI
+### 4. Run the Interactive CLI
 
 Launch the conversational terminal shell:
 ```bash
@@ -173,28 +229,58 @@ python3 main.py
 
 #### Available CLI Commands:
 * `/clear` — Clear current conversation context memory.
-* `/research [topic]` — Scrape the web and ingest knowledge on-the-fly.
+* `/research [topic]` — Scrape the web fallback chain (Wolfram/DDG/Wiki/ArXiv) and ingest knowledge on-the-fly.
 * `/add [text]` — Ingest custom text directly into global semantic memory.
 * `/info` — View system architecture and memory statistics.
 * `/help` — Show help menu.
 * `/quit` — Exit the session.
 
-### 4. Training & Model Export
+---
 
-1. **Train the 105.4M Transformer with SFT ChatML**:
-   ```bash
-   python3 src/train.py
-   ```
+## 📥 Unified Knowledge Ingestion (`scripts/ingest.py`)
 
-2. **Generate Synthetic rStar Reasoning Data**:
-   ```bash
-   python3 scripts/rstar_self_play.py
-   ```
+Kruuboo-SLM-0.2 replaces fragmented ingestion scripts with a single universal ingestion CLI:
 
-3. **Export to INT8 ONNX for Fast Edge Deployment**:
-   ```bash
-   python3 scripts/export_onnx.py
-   ```
+```bash
+# Ingest single file
+python3 scripts/ingest.py training_data/home_remedies.json
+
+# Ingest all files in a directory
+python3 scripts/ingest.py training_data/
+
+# Ingest direct text from command line
+python3 scripts/ingest.py --text "Cold brew coffee reduces acidity by 65 percent compared to hot brew." --source "CoffeeFacts"
+
+# Batch ingestion from list
+python3 scripts/ingest.py --batch training_data/home_remedies.json training_data/legal_advice.json
+```
+
+For complete usage, chunking options, and schemas, see [docs/INGESTION_GUIDE.md](docs/INGESTION_GUIDE.md).
+
+---
+
+## 📱 Mobile Bundle Packaging (`scripts/prepare_mobile_bundle.py`)
+
+Prepare a self-contained bundle for edge deployment on iOS or Android:
+
+```bash
+python3 scripts/prepare_mobile_bundle.py
+```
+
+Produces `mobile_assets/` containing:
+- `model.onnx` (~100 MB quantized INT8 graph)
+- `tokenizer.json` (BPE 8,192 vocabulary)
+- `knowledge_base.json` (Semantic index with native 768d embeddings)
+- `config.yaml` & `mobile_manifest.json`
+
+---
+
+## ⚡ Speed & Latency Benchmarks
+
+To benchmark inference token throughput and latency:
+```bash
+python3 test_speed.py
+```
 
 ---
 
@@ -204,6 +290,17 @@ python3 main.py
 | :--- | :--- | :--- |
 | **Casual Conversation** | `"Hi, how are you today?"` | Empathetic, fluent natural dialogue without domain switching. |
 | **Identity & Memory** | `"My name is Sithija"` $\rightarrow$ `"What is my name?"` | Multi-turn contextual memory recall (*"Your name is Sithija"*). |
+| **Direct Arithmetic** | `"Calculate 24 * 15 + 100"` | Deterministic exact answer (*"24 * 15 + 100 = 460"*) with 0ms latency. |
 | **Medical Remedies** | `"What is the remedy for fever?"` | Grounded clinical advice retrieved from global semantic memory. |
 | **Legal Agreements** | `"What is an NDA and what must it contain?"` | Grounded contract definitions and structural requirements. |
 | **Survival Wilderness** | `"How to build a shelter in survival?"` | Actionable lean-to shelter construction guidelines. |
+| **Web Research Fallback** | `"/research latest discoveries in quantum computing"` | Multi-provider fallback retrieval ingested into native memory. |
+
+---
+
+## 📖 Further Documentation
+
+- **[Architecture Deep-Dive](docs/ARCHITECTURE.md)**: Mathematical formulations for RoPE, SwiGLU, Flash Attention, Native 768d RAG, and Min-P sampling.
+- **[REST API & Telemetry Reference](docs/API_REFERENCE.md)**: Complete OpenAPI spec for FastAPI endpoints, SSE event streams, and payload formats.
+- **[Ingestion Pipeline Guide](docs/INGESTION_GUIDE.md)**: Formats, chunking strategies, and batch workflows for `scripts/ingest.py`.
+- **[Web Research Fallback Guide](docs/WEB_RESEARCH_GUIDE.md)**: Multi-provider search orchestration and query resolution.

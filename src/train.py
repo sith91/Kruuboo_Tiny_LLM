@@ -455,7 +455,7 @@ def train_model(
 ):
     """Build tokenizer if needed, instantiate model, run training, and export ONNX."""
     print("=" * 70)
-    print("🎯 TINY LLM (SLM-0.1) — NEURAL MODEL TRAINING")
+    print("🎯 TINY LLM (SLM-0.2) — NEURAL MODEL TRAINING")
     print("=" * 70)
 
     max_iters = iters or MAX_ITERS
@@ -687,7 +687,7 @@ def run_training_session(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train Tiny LLM (SLM-0.1)")
+    parser = argparse.ArgumentParser(description="Train Tiny LLM (SLM-0.2)")
     parser.add_argument("--iters", type=int, default=None, help="Total training iterations")
     parser.add_argument("--batch-size", type=int, default=None, help="Effective batch size")
     parser.add_argument("--lr", type=float, default=None, help="Peak learning rate")
