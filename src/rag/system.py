@@ -2,8 +2,6 @@ import json
 import time
 import logging
 import re
-import ast
-import operator
 from pathlib import Path
 from typing import Callable, List, Dict, Tuple, Optional
 
@@ -11,78 +9,9 @@ import yaml
 import onnxruntime as ort
 
 from .document import Document
-from .greetings import (
-    GREETINGS_MAP,
-    extract_user_name_from_history,
-    check_user_intro,
-    check_naming_request,
-    check_bot_name_query,
-    check_user_name_query
-)
-from .search import hybrid_search
+from .search import hybrid_search, FAISSVectorIndex
 from .native_encoder import NativeSLMEncoder
-
-SAFE_MATH_OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-    ast.USub: operator.neg,
-    ast.UAdd: operator.pos,
-}
-
-
-def _eval_math_node(node):
-    if isinstance(node, ast.Num):
-        return node.n
-    elif isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return node.value
-    elif isinstance(node, ast.BinOp) and type(node.op) in SAFE_MATH_OPS:
-        left = _eval_math_node(node.left)
-        right = _eval_math_node(node.right)
-        return SAFE_MATH_OPS[type(node.op)](left, right)
-    elif isinstance(node, ast.UnaryOp) and type(node.op) in SAFE_MATH_OPS:
-        operand = _eval_math_node(node.operand)
-        return SAFE_MATH_OPS[type(node.op)](operand)
-    raise ValueError("Unsafe or non-arithmetic node")
-
-
-def solve_arithmetic_query(text: str) -> Optional[str]:
-    """Safely solve direct arithmetic questions (e.g. '1+1', 'what is 25 * 4', 'calculate 100/5')."""
-    clean = text.lower().strip("?.! \t\n")
-    prefixes = [
-        r"^i\s+need\s+to\s+know\s+what\s+is\s+",
-        r"^can\s+you\s+tell\s+me\s+what\s+is\s+",
-        r"^tell\s+me\s+what\s+is\s+",
-        r"^what\s+is\s+",
-        r"^whats\s+",
-        r"^calculate\s+",
-        r"^solve\s+",
-        r"^how\s+much\s+is\s+",
-        r"^evaluate\s+",
-        r"^what\s+does\s+",
-        r"^equal\s+"
-    ]
-    for pat in prefixes:
-        clean = re.sub(pat, "", clean).strip()
-
-    clean = clean.replace("equals", "").replace("equal", "").strip("?.! \t\n")
-    expr = clean.replace("^", "**").replace("x", "*").replace("×", "*").replace("÷", "/")
-
-    if re.fullmatch(r"[\d\s\+\-\*\/\%\(\)\.]+", expr) and any(c in expr for c in "+-*/%"):
-        try:
-            tree = ast.parse(expr, mode="eval")
-            val = _eval_math_node(tree.body)
-            if isinstance(val, float) and val.is_integer():
-                val = int(val)
-            return f"{clean} is {val}."
-        except Exception:
-            return None
-    return None
-
+from .db_connector import DatabaseKnowledgeSource
 from ..tokenizer import TinyTokenizer
 from ..inference import InferenceEngine
 from ..web_researcher import WebResearcher
@@ -113,13 +42,20 @@ class RAGSystem:
         embedding_model: str = "native",
         knowledge_base_path: str = "knowledge_base",
         max_seq_len: int = None,
+        db_uris: Optional[List[str]] = None,
     ):
         # 1. Load ONNX LLM
         self.model_path = model_path
         self.tokenizer_path = tokenizer_path
         logger.info(f"Loading ONNX model from {model_path}")
         try:
-            self.session = ort.InferenceSession(model_path)
+            sess_opts = ort.SessionOptions()
+            sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            self.session = ort.InferenceSession(
+                model_path,
+                sess_options=sess_opts,
+                providers=["CPUExecutionProvider"],
+            )
             input_meta = self.session.get_inputs()[0]
             self.input_name = input_meta.name
             shape = input_meta.shape
@@ -150,15 +86,42 @@ class RAGSystem:
         self.kb_path = knowledge_base_path
         self.documents: List[Document] = []
         self._load_knowledge_base()
+        self.vector_index = FAISSVectorIndex()
+        if self.documents:
+            self.vector_index.build(self.documents)
 
         # 4. Online Researcher & Persona State
         self.researcher = WebResearcher()
-        self.research_enabled = True
+        self.research_enabled = _config.get("web_research", {}).get("enabled", True)
+        self.auto_web_fallback = _config.get("web_research", {}).get("auto_fallback", True)
         self.assistant_name = "Kruuboo SLM"
         self.user_name = None
         self.current_mood = None
 
-        logger.info(f"Unified Conversational SLM initialized (Context: {self.max_seq_len} tokens, Knowledge: {len(self.documents)} docs)")
+        # 5. rStar Mutual Reasoning Engine
+        self.rstar = RStarEngine(self._engine, self.tokenizer, max_seq_len=min(512, self.max_seq_len))
+
+        # 6. Live Database Knowledge Connectors (SQLite / PostgreSQL / MySQL / MongoDB)
+        self.db_sources: Dict[str, DatabaseKnowledgeSource] = {}
+        configured_dbs = _config.get("database_sources", [])
+        if isinstance(configured_dbs, list):
+            for entry in configured_dbs:
+                if isinstance(entry, str):
+                    self.connect_db(entry)
+                elif isinstance(entry, dict) and entry.get("uri"):
+                    self.connect_db(
+                        uri=entry["uri"],
+                        name=entry.get("name"),
+                        tables=entry.get("tables"),
+                    )
+        if db_uris:
+            for uri in db_uris:
+                self.connect_db(uri)
+
+        logger.info(
+            f"Unified Conversational SLM initialized (Context: {self.max_seq_len} tokens, "
+            f"Knowledge: {len(self.documents)} docs, Live DBs: {len(self.db_sources)})"
+        )
 
     def reload_model(self, model_path: Optional[str] = None) -> bool:
         """
@@ -167,7 +130,13 @@ class RAGSystem:
         target_path = model_path or self.model_path
         logger.info(f"🔄 Hot-reloading ONNX model session from: {target_path}")
         try:
-            new_session = ort.InferenceSession(target_path)
+            sess_opts = ort.SessionOptions()
+            sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            new_session = ort.InferenceSession(
+                target_path,
+                sess_options=sess_opts,
+                providers=["CPUExecutionProvider"],
+            )
             input_meta = new_session.get_inputs()[0]
             self.input_name = input_meta.name
             shape = input_meta.shape
@@ -177,16 +146,23 @@ class RAGSystem:
             self.session = new_session
             self.model_path = target_path
 
-            # Re-create InferenceEngine
+            # Re-create InferenceEngine & RStarEngine
             self._engine = InferenceEngine(
                 session=self.session,
                 tokenizer=self.tokenizer,
                 input_name=self.input_name,
                 max_seq_len=self.max_seq_len,
             )
+            self.rstar = RStarEngine(self._engine, self.tokenizer, max_seq_len=min(512, self.max_seq_len))
 
-            # Invalidate encoder cache to load new PyTorch weights if native
+            # Invalidate encoder cache and refresh knowledge base vector index
             self._encoder = None
+            self._load_knowledge_base()
+            if hasattr(self, "vector_index") and self.documents:
+                emb0 = self.documents[0].metadata.get("embedding")
+                if emb0:
+                    self.vector_index.dimension = len(emb0)
+                self.vector_index.build(self.documents, force_rebuild=True)
             logger.info("✅ Model hot-reload successful. New weights active in memory.")
             return True
         except Exception as e:
@@ -197,10 +173,12 @@ class RAGSystem:
     def encoder(self):
         if self._encoder is None:
             if self.embedding_model_name in ["native", "tiny_llm", "kruuboo", "slm"]:
-                logger.info("Initializing Kruuboo-SLM-0.2 Native SLM Encoder (768d)...")
+                logger.info("Initializing Kruuboo-SLM-0.2 Native SLM Encoder (768d ONNX)...")
                 self._encoder = NativeSLMEncoder(
-                    model_path="models/tiny_llm.pt",
-                    tokenizer_path="tokenizer.json"
+                    model_path=self.model_path,
+                    tokenizer_path=self.tokenizer_path,
+                    session=self.session,
+                    tokenizer=self.tokenizer,
                 )
             else:
                 try:
@@ -209,7 +187,12 @@ class RAGSystem:
                     self._encoder = SentenceTransformer(self.embedding_model_name)
                 except Exception as e:
                     logger.warning(f"Fallback to NativeSLMEncoder: {e}")
-                    self._encoder = NativeSLMEncoder()
+                    self._encoder = NativeSLMEncoder(
+                        model_path=self.model_path,
+                        tokenizer_path=self.tokenizer_path,
+                        session=self.session,
+                        tokenizer=self.tokenizer,
+                    )
         return self._encoder
 
     def _load_knowledge_base(self):
@@ -265,13 +248,55 @@ class RAGSystem:
             self.documents.append(doc)
 
         logger.info(f"Added {len(chunks)} chunks from {source}")
+        if hasattr(self, "vector_index"):
+            self.vector_index.build(self.documents, force_rebuild=True)
         self.save()
 
+    def connect_db(
+        self,
+        uri: str,
+        name: Optional[str] = None,
+        tables: Optional[List[str]] = None,
+        custom_query: Optional[str] = None,
+    ) -> DatabaseKnowledgeSource:
+        """Connect a live read-only database (SQLite, PostgreSQL, MySQL, MongoDB) to RAG retrieval."""
+        source = DatabaseKnowledgeSource(
+            uri=uri,
+            name=name,
+            tables=tables,
+            custom_query=custom_query,
+        )
+        self.db_sources[source.name] = source
+        return source
+
+    def disconnect_db(self, name: str) -> bool:
+        """Disconnect a live database source by name."""
+        if name in self.db_sources:
+            del self.db_sources[name]
+            return True
+        return False
+
+    def list_databases(self) -> List[Dict]:
+        """Return metadata and discovered schema for all connected live databases."""
+        return [src.to_info_dict() for src in self.db_sources.values()]
+
     def search(self, query: str, k: int = 3) -> List[Tuple[Document, float]]:
-        """Semantic hybrid search across the unified knowledge store."""
-        results, needs_save = hybrid_search(query, self.documents, self.encoder, k)
+        """Semantic hybrid search across the unified knowledge store + live connected databases."""
+        idx = getattr(self, "vector_index", None)
+        results, needs_save = hybrid_search(query, self.documents, self.encoder, k, vector_index=idx)
         if needs_save:
             self.save()
+
+        # Query all connected live databases in parallel/sequence and merge results
+        if getattr(self, "db_sources", None):
+            db_hits: List[Tuple[Document, float]] = []
+            for db_src in self.db_sources.values():
+                db_hits.extend(db_src.search(query, k=k))
+            if db_hits:
+                combined = list(results) + db_hits
+                combined.sort(key=lambda x: x[1], reverse=True)
+                return combined[: max(k, 4)]
+
         return results
 
     def _resolve_query_context(self, question: str, history: Optional[List[Dict]]) -> str:
@@ -307,11 +332,23 @@ class RAGSystem:
         if base_tokens >= max_prompt_budget or not history:
             return system_turn + user_turn
 
+        # Only inject prior turns when the current message references prior dialogue context
+        q_lower = user_msg.lower().strip()
+        if q_lower.startswith(("my name is", "call me", "i am ", "i'm ")):
+            return system_turn + user_turn
+        q_words = set(re.findall(r"\b\w+\b", q_lower))
+        context_triggers = {
+            "my", "name", "who", "remember", "it", "its", "that", "this",
+            "them", "these", "those", "more", "else", "again", "previous", "said"
+        }
+        if not (q_words & context_triggers):
+            return system_turn + user_turn
+
         allowed_turns = []
         current_tokens = base_tokens
 
-        # Slide backwards through history turn-by-turn preserving most recent context
-        for turn in reversed(history[-8:]):
+        # Slide backwards through recent history (up to last 2 turns / 1 exchange)
+        for turn in reversed(history[-2:]):
             role = turn.get("role", "user")
             content = turn.get("content", "").strip()
             if not content:
@@ -337,6 +374,8 @@ class RAGSystem:
         top_k: int = 0,
         top_p: float = 1.0,
         repetition_penalty: float = 1.15,
+        repetition_window: int = 50,
+        stop_sequences: Optional[List[str]] = None,
         stream: bool = False,
         on_token: Optional[Callable[[str], None]] = None,
     ) -> str:
@@ -357,80 +396,25 @@ class RAGSystem:
             top_k=top_k,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
+            repetition_window=repetition_window,
+            stop_sequences=stop_sequences,
             on_token=callback,
         )
 
-    def ask(self, question: str, history: Optional[List[Dict]] = None) -> Dict:
+    def ask(
+        self,
+        question: str,
+        history: Optional[List[Dict]] = None,
+        auto_fallback: Optional[bool] = None,
+        use_reasoning: bool = False,
+        on_reasoning_step: Optional[Callable[[str], None]] = None,
+    ) -> Dict:
         """
         Unified Conversational Chat Pipeline.
-        Handles conversational chit-chat, identity resolution, semantic RAG retrieval,
-        and neural generation across all topics without rigid domain switches.
+        Routes all queries directly through semantic RAG retrieval and the neural SLM
+        without hardcoded regex, greeting dictionary, or calculator interceptors.
         """
-        clean_q = re.sub(r"[^\w\s]", "", question).lower()
-        clean_q = " ".join(clean_q.split()).strip()
-
-        # 1. User Introduction detection (prioritized)
-        intro_name = check_user_intro(clean_q)
-        if intro_name:
-            self.user_name = intro_name
-            return {
-                "answer": f"Nice to meet you, {intro_name}! How can I help you today?",
-                "knowledge_used": 0,
-                "retrieved_context": [],
-                "temperature_used": 0.7,
-            }
-
-        # 2. Exact or Word-bounded Greetings & Chit-Chat matching
-        if clean_q in GREETINGS_MAP:
-            return {
-                "answer": GREETINGS_MAP[clean_q],
-                "knowledge_used": 0,
-                "retrieved_context": [],
-                "temperature_used": 0.7,
-            }
-        for g_key, g_ans in GREETINGS_MAP.items():
-            if re.search(rf"\b{re.escape(g_key)}\b", clean_q):
-                if len(clean_q.split()) <= len(g_key.split()) + 3:
-                    return {
-                        "answer": g_ans,
-                        "knowledge_used": 0,
-                        "retrieved_context": [],
-                        "temperature_used": 0.7,
-                    }
-
-        # 3. Assistant / User Name queries
-        if check_bot_name_query(clean_q):
-            return {
-                "answer": f"My name is {self.assistant_name}. How can I assist you today?",
-                "knowledge_used": 0,
-                "retrieved_context": [],
-                "temperature_used": 0.7,
-            }
-
-        if check_user_name_query(clean_q):
-            name = getattr(self, "user_name", None) or extract_user_name_from_history(history)
-            if name and name != "my friend":
-                ans = f"Your name is {name}."
-            else:
-                ans = "I don't know your name yet! You can tell me by saying 'My name is [your name]'."
-            return {
-                "answer": ans,
-                "knowledge_used": 0,
-                "retrieved_context": [],
-                "temperature_used": 0.7,
-            }
-
-        # 4. Direct Arithmetic & Math Expression Resolution
-        math_solution = solve_arithmetic_query(question)
-        if math_solution:
-            return {
-                "answer": math_solution,
-                "knowledge_used": 0,
-                "retrieved_context": [],
-                "temperature_used": 0.0,
-            }
-
-        # 5. Semantic Knowledge Retrieval (Native 768d Hybrid RAG)
+        # 1. Semantic Knowledge Retrieval (Native 768d Hybrid RAG)
         search_query = self._resolve_query_context(question, history)
         retrieved_with_scores = self.search(search_query, k=3)
         seen_texts = set()
@@ -441,7 +425,43 @@ class RAGSystem:
                 seen_texts.add(clean_doc_text)
                 retrieved.append(doc)
 
-        # 6. System persona & emotional valence
+        # 1.1 Automated Multi-Provider Web Research Fallback (Wolfram / DDG / Wiki / ArXiv)
+        web_research_used = False
+        should_fallback = auto_fallback if auto_fallback is not None else getattr(self, "auto_web_fallback", True)
+        if not retrieved and self.research_enabled and should_fallback:
+            cleaned_topic = self.researcher.clean_query(search_query)
+            if len(cleaned_topic) >= 3 and len(cleaned_topic.split()) >= 2:
+                logger.info(f"🌐 Low semantic memory confidence for '{search_query}'. Triggering automated web fallback...")
+                try:
+                    findings = self.researcher.research_topic(search_query, max_results=2)
+                    if findings:
+                        web_research_used = True
+                        logger.info(f"✅ Retrieved {len(findings)} web research items. Ingesting into semantic memory...")
+                        for finding in findings:
+                            self.add_text(
+                                finding["text"],
+                                source=finding["source"],
+                                metadata={"url": finding.get("url", "")}
+                            )
+                        fresh_results = self.search(search_query, k=3)
+                        for doc, score in fresh_results:
+                            clean_doc_text = doc.text.strip()
+                            if score >= 0.35 and clean_doc_text not in seen_texts:
+                                seen_texts.add(clean_doc_text)
+                                retrieved.append(doc)
+
+                        if not retrieved:
+                            for finding in findings:
+                                doc_obj = Document(
+                                    text=finding["text"],
+                                    source=finding["source"],
+                                    metadata={"url": finding.get("url", "")}
+                                )
+                                retrieved.append(doc_obj)
+                except Exception as web_err:
+                    logger.debug(f"Automated web fallback skipped: {web_err}")
+
+        # 2. System persona & emotional valence
         system_msg = "You are Kruuboo SLM, a helpful, knowledgeable, and empathetic AI assistant."
         try:
             from src.feeling import update_mood, get_mood_instruction
@@ -451,10 +471,32 @@ class RAGSystem:
         except Exception:
             self.current_mood = None
 
-        # 6. Response Synthesis (Neural Generation with Grounded Context)
+        # 3. Response Synthesis (rStar Mutual Reasoning OR Neural Generation)
         max_budget = max(64, self.max_seq_len - 140)
+        reasoning_info = None
 
-        if retrieved:
+        if use_reasoning:
+            context_text = "\n".join([f"• {d.text}" for d in retrieved[:3]]) if retrieved else ""
+            traj = self.rstar.reason_and_verify(
+                question=question,
+                context=context_text,
+                num_candidates=3,
+                on_step=on_reasoning_step,
+            )
+            answer = traj.final_answer
+            temp = 0.2
+            reasoning_info = {
+                "score": round(traj.score, 3),
+                "steps": [
+                    {
+                        "type": s.step_type,
+                        "thought": s.thought,
+                        "confidence": round(s.confidence, 3)
+                    }
+                    for s in traj.steps
+                ]
+            }
+        elif retrieved:
             # Grounded Neural Synthesis: Condition the model on retrieved facts
             context_text = "\n".join([f"• {d.text}" for d in retrieved[:3]])
             grounded_system = (
@@ -465,25 +507,11 @@ class RAGSystem:
             temp = 0.35
             prompt = self._build_budgeted_prompt(grounded_system, question, history, max_budget)
             answer = self.generate(prompt, max_tokens=140, temperature=temp, min_p=0.05)
-
-            # Fallback to direct fact if neural output is degenerate or empty
-            if not answer or len(answer.strip().split()) < 3:
-                answer = retrieved[0].text
         else:
             # Natural Open-Ended Generation with Min-P sampling
             temp = 0.65
             prompt = self._build_budgeted_prompt(system_msg, question, history, max_budget)
             answer = self.generate(prompt, max_tokens=120, temperature=temp, min_p=0.05)
-
-        # 7. Anti-Repetition Guardrail
-        words = answer.split()
-        if len(words) > 8:
-            unique_ratio = len(set(words)) / len(words)
-            if unique_ratio < 0.35 or words.count("given") >= 3 or words.count("the") > len(words) * 0.38:
-                if retrieved:
-                    answer = retrieved[0].text
-                else:
-                    answer = "I am Kruuboo Tiny LLM. I can help answer questions across medical, legal, survival, math, and conversational topics. What would you like to know?"
 
         return {
             "answer": answer,
@@ -491,6 +519,8 @@ class RAGSystem:
             "retrieved_context": [d.text for d in retrieved],
             "temperature_used": temp,
             "mood": self.current_mood.to_dict() if getattr(self, "current_mood", None) else None,
+            "web_research_used": web_research_used,
+            "reasoning": reasoning_info,
         }
 
     def research_and_learn(self, query: str) -> bool:
@@ -531,4 +561,5 @@ class RAGSystem:
         return {
             "total_documents": len(self.documents),
             "knowledge_base_path": self.kb_path,
+            "connected_databases": [src.to_info_dict() for src in getattr(self, "db_sources", {}).values()],
         }

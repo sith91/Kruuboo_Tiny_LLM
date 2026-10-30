@@ -1,5 +1,126 @@
 {
-  "history": [],
+  "history": [
+    {
+      "step": 1,
+      "train_loss": 5.6557,
+      "val_loss": 6.8758,
+      "perplexity": 285.93,
+      "lr": 2.9999999999999997e-06,
+      "speed": 77.3,
+      "is_best": true,
+      "timestamp": 1793246846.164097
+    },
+    {
+      "step": 2,
+      "train_loss": 4.9779,
+      "val_loss": 4.9779,
+      "perplexity": 145.17,
+      "lr": 5.999999999999999e-06,
+      "speed": 91.0,
+      "is_best": false,
+      "timestamp": 1793246851.041333
+    },
+    {
+      "step": 3,
+      "train_loss": 5.2246,
+      "val_loss": 5.2246,
+      "perplexity": 185.78,
+      "lr": 9e-06,
+      "speed": 100.1,
+      "is_best": false,
+      "timestamp": 1793246873.333341
+    },
+    {
+      "step": 4,
+      "train_loss": 3.6413,
+      "val_loss": 3.6413,
+      "perplexity": 38.14,
+      "lr": 1.1999999999999999e-05,
+      "speed": 27.3,
+      "is_best": false,
+      "timestamp": 1793247326.558389
+    },
+    {
+      "step": 5,
+      "train_loss": 4.0417,
+      "val_loss": 4.0417,
+      "perplexity": 56.92,
+      "lr": 1.4999999999999999e-05,
+      "speed": 20.7,
+      "is_best": false,
+      "timestamp": 1793247739.441244
+    },
+    {
+      "step": 6,
+      "train_loss": 6.4414,
+      "val_loss": 6.4414,
+      "perplexity": 627.28,
+      "lr": 1.8e-05,
+      "speed": 16.3,
+      "is_best": false,
+      "timestamp": 1793248091.332509
+    },
+    {
+      "step": 7,
+      "train_loss": 4.9463,
+      "val_loss": 4.9463,
+      "perplexity": 140.65,
+      "lr": 2.1e-05,
+      "speed": 15.6,
+      "is_best": false,
+      "timestamp": 1793248474.874857
+    },
+    {
+      "step": 8,
+      "train_loss": 5.0758,
+      "val_loss": 5.0758,
+      "perplexity": 160.09,
+      "lr": 2.3999999999999997e-05,
+      "speed": 15.1,
+      "is_best": false,
+      "timestamp": 1793248874.997005
+    },
+    {
+      "step": 9,
+      "train_loss": 4.8325,
+      "val_loss": 4.8325,
+      "perplexity": 125.52,
+      "lr": 2.6999999999999996e-05,
+      "speed": 15.0,
+      "is_best": false,
+      "timestamp": 1793249319.761568
+    },
+    {
+      "step": 10,
+      "train_loss": 4.5611,
+      "val_loss": 4.5611,
+      "perplexity": 95.69,
+      "lr": 2.9999999999999997e-05,
+      "speed": 13.0,
+      "is_best": false,
+      "timestamp": 1793250200.696865
+    },
+    {
+      "step": 11,
+      "train_loss": 5.945,
+      "val_loss": 5.945,
+      "perplexity": 381.82,
+      "lr": 3.2999999999999996e-05,
+      "speed": 11.1,
+      "is_best": false,
+      "timestamp": 1793250905.587967
+    },
+    {
+      "step": 12,
+      "train_loss": 4.6686,
+      "val_loss": 4.6686,
+      "perplexity": 106.55,
+      "lr": 3.6e-05,
+      "speed": 11.6,
+      "is_best": false,
+      "timestamp": 1793251113.758104
+    }
+  ],
   "probes": [
     {
       "step": 0,
@@ -30,8 +151,32 @@
       "prompt": "How do I treat a mild burn at home?",
       "output": "of theint of the mod, 19D of the spiritual theakiv a given a givenhess, especially in a artwork of a given given givenists in a given given Pythono.\n\n print aens and the Python ability of the not a given the columns and from the given's a",
       "timestamp": 1791392329.526711
+    },
+    {
+      "step": 0,
+      "prompt": "Test direct argument",
+      "output": "sw vast bet motisterssoleffic adaptedgen usability",
+      "timestamp": 1793125225.133386
+    },
+    {
+      "step": 0,
+      "prompt": "Test active model",
+      "output": "ve StartkenMeanies backgroundroom physics reseonomic",
+      "timestamp": 1793125225.578121
+    },
+    {
+      "step": 0,
+      "prompt": "How do I treat a mild burn at home?",
+      "output": "s alledy of the the un1, breaks. \nprint((\"(( =.s, 9.\nprintstr((4)\nprint((_((\"(\",5, 2, 32, 2, 2P, 3, 2, 2, 199",
+      "timestamp": 1793246791.688677
+    },
+    {
+      "step": 0,
+      "prompt": "How do I treat a mild burn at home?",
+      "output": ", 4, 2010, defrel, affection, 198), 1992, 2010, and intimacy\u2014a, 198).\n| 6 | 4 (9 |2, and **emotional (3) may be low their mostditional, which (B",
+      "timestamp": 1793258386.020075
     }
   ],
-  "best_val_loss": Infinity,
-  "last_updated": 1791392329.527467
+  "best_val_loss": 3.6413,
+  "last_updated": 1793258386.020975
 }

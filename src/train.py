@@ -79,7 +79,7 @@ def prepare_chat_samples(raw_samples: List[str], tokenizer: TinyTokenizer, max_s
     - Assistant header '<|im_start|>assistant\n' is masked to -100.
     - Assistant reply content and '<|im_end|>' are kept as target token IDs for loss calculation.
     """
-    turn_pattern = re.compile(r'(<\|im_start\|>(?:system|user|assistant)\n.*?<\|im_end\|>)', re.DOTALL)
+    turn_pattern = re.compile(r'(<\|im_start\|>(?:system|user|assistant)\n.*?<\|im_end\|>\n?)', re.DOTALL)
     assistant_hdr_ids = tokenizer.encode("<|im_start|>assistant\n")
     hdr_len = len(assistant_hdr_ids)
 
@@ -180,7 +180,7 @@ class Trainer:
 
         # Determine dynamic sequence length for this batch to save compute & VRAM
         max_batch_len = max(s.length for s in batch_samples)
-        batch_len = min(BLOCK_SIZE, max(16, max_batch_len))
+        batch_len = min(256, BLOCK_SIZE, max(16, max_batch_len))
 
         batch_x = []
         batch_y = []
@@ -301,10 +301,6 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), GRAD_CLIP)
             self.optimizer.step()
 
-            # Free MPS cache periodically
-            if self.device == "mps" and step % 20 == 0:
-                torch.mps.empty_cache()
-
             # Logging & evaluation
             is_eval = (step % eval_every == 0 or step == max_iters - 1)
             val_loss = step_loss
@@ -353,8 +349,59 @@ class Trainer:
 # Corpus Loading Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _build_foundational_chatml_samples() -> List[str]:
+    """
+    Build clean multi-turn conversational, identity-memory, and RAG-grounded ChatML samples
+    matching the exact system prompt format used by RAGSystem.ask at inference time.
+    """
+    sys_base = "You are Kruuboo SLM, a helpful, knowledgeable, and empathetic AI assistant. The user is in a neutral, calm mood. Respond clearly, helpfully, and naturally."
+    samples: List[str] = []
+
+    # 1. Core conversational & greeting turns
+    core_pairs = [
+        ("Hi, how are you today?", "Hello! I am doing great, thank you for asking. How can I help you today?"),
+        ("Hi", "Hi there! How can I help you today?"),
+        ("Hello!", "Hello! How can I assist you today?"),
+        ("Hey, how is it going?", "Everything is going well! What would you like to chat about or work on today?"),
+        ("Good morning!", "Good morning! I hope you are having a wonderful day. How can I help you?"),
+        ("Who are you?", "I am Kruuboo SLM, a local Small Language Model assistant with semantic RAG memory."),
+        ("What is your name?", "My name is Kruuboo SLM. How can I assist you today?"),
+        ("What can you do?", "I can hold multi-turn conversations, remember context from our chat, and answer questions across medical remedies, legal agreements, survival techniques, science, and general knowledge."),
+        ("Thank you so much!", "You are very welcome! Let me know if there is anything else I can help you with."),
+        ("I feel a bit stressed today.", "I am sorry to hear you are feeling stressed. Take a slow, deep breath. Would you like to talk about what is on your mind or take things one step at a time?"),
+        ("What is 2 + 2?", "2 + 2 is 4."),
+        ("What is 10 * 5?", "10 * 5 is 50."),
+        ("Calculate 25 + 75", "25 + 75 is 100."),
+        ("What is machine learning?", "Machine learning is a branch of artificial intelligence where computer systems learn patterns from data to make predictions or decisions without being explicitly programmed."),
+    ]
+    for q, a in core_pairs:
+        samples.append(
+            f"<|im_start|>system\n{sys_base}<|im_end|>\n"
+            f"<|im_start|>user\n{q}<|im_end|>\n"
+            f"<|im_start|>assistant\n{a}<|im_end|>\n"
+        )
+
+    # 2. Multi-turn name & context memory dialogues (single turn + 2-turn follow-up)
+    names = ["Sithija", "Alex", "Maya", "Liam", "Sophia", "Noah", "Elena", "David"]
+    for name in names:
+        samples.append(
+            f"<|im_start|>system\n{sys_base}<|im_end|>\n"
+            f"<|im_start|>user\nMy name is {name}<|im_end|>\n"
+            f"<|im_start|>assistant\nNice to meet you, {name}! How can I help you today?<|im_end|>\n"
+        )
+        samples.append(
+            f"<|im_start|>system\n{sys_base}<|im_end|>\n"
+            f"<|im_start|>user\nMy name is {name}<|im_end|>\n"
+            f"<|im_start|>assistant\nNice to meet you, {name}! How can I help you today?<|im_end|>\n"
+            f"<|im_start|>user\nWhat is my name?<|im_end|>\n"
+            f"<|im_start|>assistant\nYour name is {name}.<|im_end|>\n"
+        )
+
+    return samples * 4
+
+
 def load_training_corpus(custom_file: Optional[str] = None) -> List[str]:
-    """Load and format all domain datasets, Q&A pairs, and ChatML dialogues."""
+    """Load and format clean ChatML dialogues and RAG-grounded Q&A pairs."""
     custom_texts: List[str] = []
 
     if custom_file:
@@ -372,73 +419,98 @@ def load_training_corpus(custom_file: Optional[str] = None) -> List[str]:
             print(f"❌ Custom file not found: {custom_file}")
         return custom_texts
 
-    # 1. Knowledge Base documents
-    kb_dirs = [Path("knowledge_base")]
-    for kb_dir in kb_dirs:
-        if kb_dir.exists():
-            for kb_file in kb_dir.glob("**/knowledge.json"):
-                try:
-                    with open(kb_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        for doc in data:
-                            if isinstance(doc, dict) and doc.get("text"):
-                                txt = doc["text"].strip()
-                                if "<|im_start|>" not in txt:
-                                    txt = (f"<|im_start|>system\nYou are Kruuboo-SLM, a helpful, intelligent, and knowledgeable assistant.<|im_end|>\n"
-                                           f"<|im_start|>user\nProvide information regarding this topic.<|im_end|>\n"
-                                           f"<|im_start|>assistant\n{txt}<|im_end|>\n")
-                                custom_texts.append(txt)
-                except Exception as e:
-                    print(f"⚠️ Error reading KB {kb_file}: {e}")
+    sys_base = "You are Kruuboo SLM, a helpful, knowledgeable, and empathetic AI assistant. The user is in a neutral, calm mood. Respond clearly, helpfully, and naturally."
 
-    # 2. Training Data Directory
+    # 1. Foundational multi-turn conversational & memory samples
+    custom_texts.extend(_build_foundational_chatml_samples())
+
+    # 2. Structured domain JSON datasets (both direct Q&A and RAG-grounded synthesis)
     td_dir = Path("training_data")
     if td_dir.exists():
-        # JSON files
-        for json_file in td_dir.glob("*.json"):
+        for json_file in sorted(td_dir.glob("*.json")):
             try:
                 with open(json_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    for item in data:
-                        if "formatted_chatml" in item:
-                            custom_texts.append(item["formatted_chatml"])
-                        elif "question" in item and "advice" in item:
-                            q = item["question"]
-                            a = item["advice"]
-                            formatted = f"<|im_start|>system\nYou are Kruuboo-SLM, a helpful, intelligent, and knowledgeable assistant.<|im_end|>\n<|im_start|>user\n{q}<|im_end|>\n<|im_start|>assistant\n{a}<|im_end|>\n"
-                            custom_texts.append(formatted)
-                        elif "ailment" in item and "remedy" in item:
-                            ailment = item["ailment"]
-                            remedy = item["remedy"]
-                            formatted = f"<|im_start|>system\nYou are Kruuboo-SLM, a helpful, intelligent, and knowledgeable assistant.<|im_end|>\n<|im_start|>user\nWhat is the remedy for {ailment}?<|im_end|>\n<|im_start|>assistant\n{remedy}<|im_end|>\n"
-                            custom_texts.append(formatted)
+                for item in data:
+                    q, a, ctx = None, None, None
+                    if "question" in item and "advice" in item:
+                        q = item["question"]
+                        a = item["advice"]
+                        ctx = a
+                    elif "ailment" in item and "remedy" in item:
+                        ailment = item["ailment"]
+                        q = f"What is the remedy for {ailment.lower()}?"
+                        a = item["remedy"]
+                        ctx = f"Home Remedy for {ailment}: {a}"
+                    elif "topic" in item and "instructions" in item:
+                        topic = item["topic"]
+                        q = f"How to {topic.lower()} in survival?"
+                        a = item["instructions"]
+                        ctx = f"Survival Guide - {topic} ({item.get('situation', '')}): {a}"
+
+                    if q and a:
+                        direct = (
+                            f"<|im_start|>system\n{sys_base}<|im_end|>\n"
+                            f"<|im_start|>user\n{q}<|im_end|>\n"
+                            f"<|im_start|>assistant\n{a}<|im_end|>\n"
+                        )
+                        grounded = (
+                            f"<|im_start|>system\n{sys_base}\n\n"
+                            f"Relevant Knowledge Context:\n• {ctx}\n\n"
+                            f"Answer the user's question accurately using the context above. Keep explanations clear and conversational.<|im_end|>\n"
+                            f"<|im_start|>user\n{q}<|im_end|>\n"
+                            f"<|im_start|>assistant\n{a}<|im_end|>\n"
+                        )
+                        custom_texts.extend([direct, grounded] * 4)
             except Exception as e:
                 print(f"⚠️ Error reading JSON {json_file}: {e}")
 
-        # Text files
-        for txt_file in td_dir.glob("*.txt"):
-            if txt_file.name in ["wikitext2.txt", "tinystories.txt", "US_Army_Survival_Manual_FM21-76.txt"]:
-                print(f"⏭️  Skipping raw text corpus: {txt_file.name}")
+        # 3. Curated concise ChatML dialogues from conversational_dialogues.txt & alpaca_chatml.txt
+        for fname, limit in [("conversational_dialogues.txt", 180), ("alpaca_chatml.txt", 180)]:
+            txt_file = td_dir / fname
+            if not txt_file.exists():
                 continue
-
             try:
                 with open(txt_file, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-
                 if "<|im_start|>system" in content:
                     raw_dlgs = content.split("<|im_start|>system")
-                    dlgs = ["<|im_start|>system" + d for d in raw_dlgs if d.strip()]
-                    custom_texts.extend(dlgs)
-                elif "<|im_start|>user" in content:
-                    raw_dlgs = content.split("<|im_start|>user")
-                    dlgs = ["<|im_start|>user" + d for d in raw_dlgs if d.strip()]
-                    custom_texts.extend(dlgs)
-                else:
-                    chunks = [c.strip() for c in content.split("\n\n") if len(c.strip()) > 30]
-                    custom_texts.extend(chunks)
+                    dlgs = [
+                        "<|im_start|>system" + d.replace("You are a helpful assistant.", sys_base)
+                        for d in raw_dlgs if d.strip() and 60 < len(d) < 450
+                    ]
+                    custom_texts.extend(dlgs[:limit])
             except Exception as e:
                 print(f"⚠️ Error reading TXT {txt_file}: {e}")
 
+    # 4. Knowledge Base RAG-grounded Q&A pairs
+    kb_file = Path("knowledge_base/knowledge.json")
+    if kb_file.exists():
+        try:
+            with open(kb_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for doc in data[:120]:
+                if isinstance(doc, dict) and doc.get("text"):
+                    txt = doc["text"].strip()
+                    if ":" in txt and len(txt) < 500:
+                        head, body = txt.split(":", 1)
+                        if 3 <= len(head.strip()) <= 60 and len(body.strip()) >= 15:
+                            q = f"What is {head.strip().lower()}?"
+                            a = body.strip()
+                            grounded = (
+                                f"<|im_start|>system\n{sys_base}\n\n"
+                                f"Relevant Knowledge Context:\n• {txt}\n\n"
+                                f"Answer the user's question accurately using the context above. Keep explanations clear and conversational.<|im_end|>\n"
+                                f"<|im_start|>user\n{q}<|im_end|>\n"
+                                f"<|im_start|>assistant\n{a}<|im_end|>\n"
+                            )
+                            custom_texts.append(grounded)
+        except Exception as e:
+            print(f"⚠️ Error reading KB {kb_file}: {e}")
+
+    import random
+    random.seed(42)
+    random.shuffle(custom_texts)
     return custom_texts
 
 
@@ -529,8 +601,8 @@ def train_model(
     print(f"🧠 Model Architecture: {model.num_parameters():,} parameters ({model.num_parameters()/1e6:.1f} M)")
     print(f"   d_model={D_MODEL}, n_heads={N_HEADS}, n_layers={N_LAYERS}, d_ff={D_FF}, max_seq_len={BLOCK_SIZE}")
 
-    # Micro batch size to guarantee stability on device memory
-    micro_batch_size = 2 if device in ("mps", "cpu") else 4
+    # Full batch size on MPS/CUDA for high throughput on right-sized model
+    micro_batch_size = effective_batch_size if device in ("mps", "cuda") else 4
 
     # 5. Train
     trainer = Trainer(model, tokenizer, device=device, lr_max=lr_max, lr_min=LR_MIN)
@@ -548,7 +620,7 @@ def train_model(
     torch.save(trained_model.state_dict(), save_path)
     print(f"💾 Trained model saved to {save_path}")
 
-    # 7. Export to ONNX & Quantized ONNX
+    # 7. Export to ONNX & Quantized ONNX and refresh knowledge base embeddings
     if export_onnx:
         print("\n" + "=" * 70)
         print("📦 EXPORTING MODEL TO ONNX & INT8 QUANTIZATION")
@@ -561,6 +633,25 @@ def train_model(
                 output_path="models/tiny_llm.onnx",
             )
             print(f"🎉 Model exported successfully!\n   ONNX: {onnx_path}\n   INT8: {quant_path}")
+
+            # Refresh semantic knowledge base embeddings with the newly trained model
+            kb_path = Path("knowledge_base/knowledge.json")
+            if kb_path.exists():
+                print("🔄 Re-indexing knowledge_base/knowledge.json with trained native embeddings...")
+                from src.rag.native_encoder import NativeSLMEncoder
+                encoder = NativeSLMEncoder(model_path=quant_path, tokenizer_path="tokenizer.json")
+                with open(kb_path, "r", encoding="utf-8") as f:
+                    kb_docs = json.load(f)
+                texts = [d.get("text", "") for d in kb_docs]
+                if texts:
+                    embs = encoder.encode(texts, batch_size=32)
+                    for doc_item, emb in zip(kb_docs, embs):
+                        if "metadata" not in doc_item or not isinstance(doc_item["metadata"], dict):
+                            doc_item["metadata"] = {}
+                        doc_item["metadata"]["embedding"] = emb.tolist()
+                    with open(kb_path, "w", encoding="utf-8") as f:
+                        json.dump(kb_docs, f, indent=2)
+                    print(f"✅ Re-indexed {len(kb_docs)} knowledge documents ({embs.shape[1]}d vectors).")
         except Exception as e:
             print(f"⚠️ ONNX export warning: {e}")
 
@@ -628,10 +719,11 @@ def run_training_session(
             monitor.log_message(f"⚠️ Could not load checkpoint ({e}), initializing fresh.")
 
     trainer = Trainer(model, tokenizer, device=device, lr_max=LR_MAX, lr_min=LR_MIN)
+    monitor.set_active_model(model, tokenizer, device=device)
 
-    # Initial probe at Step 0
+    # Initial probe at Step 0 (direct in-memory argument, 0 disk I/O)
     monitor.log_message(f"Probing initial model response for '{probe_prompt}'...")
-    monitor.probe_model(probe_prompt)
+    monitor.probe_model(probe_prompt, model=model, tokenizer=tokenizer, device=device)
 
     # Callback wrapper
     def step_hook(step, total_steps, train_loss, val_loss, lr, speed, tokens, elapsed, is_best):
@@ -647,23 +739,26 @@ def run_training_session(
             is_best=is_best,
         )
         if step % 25 == 0 and step < total_steps:
-            monitor.probe_model(probe_prompt)
+            monitor.probe_model(probe_prompt, model=model, tokenizer=tokenizer, device=device)
 
     # Run train
     micro_batch = 2 if device in ("mps", "cpu") else 4
-    trainer.train(
-        raw_samples=raw_samples,
-        max_iters=max_iters,
-        batch_size=BATCH_SIZE,
-        micro_batch_size=micro_batch,
-        eval_every=min(25, max(5, max_iters // 4)),
-        on_step=step_hook,
-        stop_event=stop_event,
-        pause_event=pause_event,
-    )
+    try:
+        trainer.train(
+            raw_samples=raw_samples,
+            max_iters=max_iters,
+            batch_size=BATCH_SIZE,
+            micro_batch_size=micro_batch,
+            eval_every=min(25, max(5, max_iters // 4)),
+            on_step=step_hook,
+            stop_event=stop_event,
+            pause_event=pause_event,
+        )
+    finally:
+        monitor.clear_active_model()
 
     # Final probe
-    monitor.probe_model(probe_prompt)
+    monitor.probe_model(probe_prompt, model=model, tokenizer=tokenizer, device=device)
 
     # Save checkpoint
     Path("models").mkdir(parents=True, exist_ok=True)

@@ -81,6 +81,18 @@ $$\sigma_{\text{init}} = \frac{0.02}{\sqrt{2 \cdot N_{\text{layers}}}} = \frac{0
 
 preventing variance explosion as the network depth reaches 14 layers.
 
+### 2.5. Unified 5D Key-Value (KV) Caching & $\mathcal{O}(1)$ Decoding
+To eliminate the quadratic $\mathcal{O}(N^2)$ computational overhead of autoregressive token generation, Kruuboo implements unified 5D Key-Value Caching across both PyTorch and ONNX Runtime:
+
+$$\text{Cache Shape: } [N_{\text{layers}}, B, N_{\text{heads}}, T_{\text{past}}, d_{\text{head}}] = [14, 1, 12, T_{\text{past}}, 64]$$
+
+1. **Prefill Phase ($T_{\text{past}} = 0$)**: The full prompt $X_{\text{prompt}} \in \mathbb{R}^{1 \times T}$ is processed once through all 14 blocks. Rotary embeddings are applied at base offsets $0 \dots T-1$, and initial key and value matrices are returned as `present_keys` and `present_values`.
+2. **Decode Phase ($T = 1$)**: For each generated token $x_{t}$, the model executes with sequence length 1. RoPE is evaluated with explicit position offset $T_{\text{past}}$:
+
+$$\begin{pmatrix} R_{\Theta, T_{\text{past}}}^d q_{2i} \\ R_{\Theta, T_{\text{past}}}^d q_{2i+1} \end{pmatrix}$$
+
+3. **Dynamic Attention Concat**: The single new key $k_t$ and value $v_t$ are concatenated onto the cached tensors along dimension $-2$, and attention is computed across all $T_{\text{past}} + 1$ keys without re-evaluating preceding hidden layers, reducing per-token generation complexity from $\mathcal{O}(N^2)$ to $\mathcal{O}(1)$.
+
 ---
 
 ## 3. Native 768d Semantic RAG Encoder
@@ -105,12 +117,14 @@ The resulting unit vector $e_{\text{doc}} \in \mathbb{R}^{768}$ shares the exact
 ### 3.2. Hybrid Semantic Retrieval Scoring
 During query resolution, Kruuboo computes a weighted hybrid score combining lexical token overlap with 768d cosine similarity:
 
-$$S(q, d) = \alpha \cdot S_{\text{lex}}(q, d) + (1 - \alpha) \cdot S_{\text{sem}}(q, d)$$
+$$S(q, d) = \begin{cases} 
+0.40 \cdot S_{\text{lex}}(q, d) + 0.60 \cdot S_{\text{sem}}(q, d), & \text{if } S_{\text{lex}}(q, d) > 0 \\
+0.70 \cdot S_{\text{sem}}(q, d), & \text{if } S_{\text{lex}}(q, d) = 0
+\end{cases}$$
 
 where:
-- $\alpha = 0.65$ (Lexical weight)
 - $S_{\text{sem}}(q, d) = \cos(e_q, e_d) = \frac{e_q \cdot e_d}{\|e_q\| \|e_d\|}$
-- $S_{\text{lex}}(q, d) = \frac{|Q_{\text{tokens}} \cap D_{\text{tokens}}|}{|Q_{\text{tokens}}|}$ (with keyword term frequency boosting)
+- $S_{\text{lex}}(q, d) = \frac{|Q_{\text{tokens}} \cap D_{\text{tokens}}|}{|Q_{\text{tokens}}|}$ (with stopword filtering and keyword overlap)
 - Confidence cutoff: $S(q, d) \ge 0.40$. Queries matching below 0.40 trigger the multi-provider web fallback chain.
 
 ---

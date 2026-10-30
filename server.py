@@ -880,15 +880,18 @@ async def ask(request: Request):
     data = await request.json()
     question = data.get("question", "")
     history = data.get("history", []) or data.get("conversation_history", [])
+    use_reasoning = bool(data.get("use_reasoning", False))
 
-    # Pure conversational pipeline
-    res = rag.ask(question, history=history)
+    # Pure conversational pipeline with optional rStar reasoning
+    res = rag.ask(question, history=history, use_reasoning=use_reasoning)
 
     return JSONResponse(content={
         "answer": res.get("answer", ""),
         "knowledge_used": res.get("knowledge_used", 0),
         "retrieved_context": res.get("retrieved_context", []),
         "validated": True,
+        "web_research_used": res.get("web_research_used", False),
+        "reasoning": res.get("reasoning"),
     })
 
 

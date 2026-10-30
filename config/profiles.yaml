@@ -1,0 +1,73 @@
+default_profile: small
+runtime_defaults:
+  temperature: 0.65
+  min_p: 0.05
+  top_k: 0
+  top_p: 1.0
+  max_tokens: 120
+  repetition_penalty: 1.15
+  use_rag: true
+  rag_k: 3
+  reasoning: false
+profiles:
+  micro:
+    description: Ultra-lightweight 3.2M edge profile for instant CPU/IoT inference
+    n_layers: 4
+    d_model: 192
+    n_heads: 4
+    n_kv_heads: 2
+    d_ff: 576
+    max_seq_len: 256
+    vocab_size: 8192
+    checkpoint_dir: checkpoints/micro
+    artifact_path: artifacts/micro_int8.onnx
+    flagged: true
+  small:
+    description: Balanced 13.8M conversational & RAG profile (converges in minutes
+      on Mac MPS)
+    n_layers: 6
+    d_model: 384
+    n_heads: 6
+    n_kv_heads: 6
+    d_ff: 1536
+    max_seq_len: 512
+    vocab_size: 8192
+    checkpoint_dir: checkpoints/small
+    artifact_path: artifacts/small_int8.onnx
+    flagged: true
+  medium:
+    description: Mid-sized 38M GQA profile for deeper multi-turn context and RAG synthesis
+    n_layers: 10
+    d_model: 512
+    n_heads: 8
+    n_kv_heads: 4
+    d_ff: 1536
+    max_seq_len: 1024
+    vocab_size: 8192
+    checkpoint_dir: checkpoints/medium
+    artifact_path: artifacts/medium_int8.onnx
+    flagged: false
+  large:
+    description: High-capacity 105.4M 14-layer profile for GPU/MPS training
+    n_layers: 14
+    d_model: 768
+    n_heads: 12
+    n_kv_heads: 12
+    d_ff: 3072
+    max_seq_len: 1024
+    vocab_size: 8192
+    checkpoint_dir: checkpoints/large
+    artifact_path: artifacts/large_int8.onnx
+    flagged: false
+  test6L:
+    description: Custom 7.48M profile (6L, 384d, 6H/2KV)
+    n_layers: 6
+    d_model: 384
+    n_heads: 6
+    n_kv_heads: 2
+    d_ff: 768
+    max_seq_len: 512
+    vocab_size: 4096
+    checkpoint_dir: checkpoints/test6L
+    artifact_path: artifacts/test6L_int8.onnx
+    flagged: true

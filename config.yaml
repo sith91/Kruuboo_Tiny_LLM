@@ -2,24 +2,24 @@
 
 model:
   name: "tiny_llm"
-  d_model: 768          # 105M parameter / 100MB INT8 high-capacity SLM
-  n_heads: 12           # 12 attention heads (head_dim = 64)
-  n_layers: 14          # 14 transformer layers (100.5 MB INT8 footprint)
-  d_ff: 3072            # SwiGLU hidden dimension
-  max_seq_len: 1024     # Extended context memory window: 1024 tokens
+  d_model: 384          # 13.8M parameter right-sized SLM (~14MB INT8 footprint)
+  n_heads: 6            # 6 attention heads (head_dim = 64)
+  n_layers: 6           # 6 transformer layers
+  d_ff: 1536            # SwiGLU hidden dimension
+  max_seq_len: 512      # Context memory window: 512 tokens
   vocab_size: 8192      # Subword vocabulary target
-  dropout: 0.1
+  dropout: 0.05
 
 training:
   batch_size: 8
-  block_size: 1024      # matches max_seq_len above
-  max_iters: 8000       # iterations for training
-  learning_rate_max: 3e-4   # peak LR (cosine schedule)
-  learning_rate_min: 1e-5   # floor LR at end of decay
-  warmup_iters: 100     # linear warmup steps
+  block_size: 512       # matches max_seq_len above
+  max_iters: 1200       # iterations for full SFT convergence
+  learning_rate_max: 6e-4   # peak LR (cosine schedule)
+  learning_rate_min: 3e-5   # floor LR at end of decay
+  warmup_iters: 60      # linear warmup steps
   grad_clip: 1.0
-  weight_decay: 0.1
-  val_ratio: 0.1        # fraction held out for validation
+  weight_decay: 0.05
+  val_ratio: 0.05       # fraction held out for validation
 
 rag:
   embedding_model: "native"
@@ -44,6 +44,7 @@ wolfram:
 
 web_research:
   enabled: true
+  auto_fallback: true   # Automatically trigger web fallback chain when local knowledge is insufficient
   max_results: 3
   # Fallback provider chain: executed in order until valid knowledge is retrieved
   providers:

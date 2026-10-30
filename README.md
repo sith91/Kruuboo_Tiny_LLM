@@ -1,4 +1,4 @@
-# 🎯 Kruuboo Tiny LLM (SLM-0.2) — Unified Conversational SLM & Native RAG
+# 🎯 Kruuboo Tiny LLM (Kruuboo-0.6) — Dynamic Profile Registry, Live DB RAG & Unified SLM
 
 A high-capacity, privacy-first Small Language Model (SLM) platform combining a custom-trained **105.4M Parameter Transformer Decoder** (~100 MB INT8 footprint with **RoPE**, **SwiGLU**, **1,024 Context Memory**, and **Flash Attention**) with a **Native 768d Semantic RAG Memory**, a **Multi-Provider Web Research Fallback Chain**, **Direct Arithmetic Resolution**, **Min-P Sampling**, and an interactive **Live Learning Visualizer & Training Studio**.
 
@@ -70,7 +70,7 @@ graph TD
     
     MathCheck -- No --> ContextResolver[Sliding Context & Coreference Resolver]
     ContextResolver --> NativeEncoder[Native SLM 768d Encoder: src/rag/native_encoder.py]
-    NativeEncoder --> HybridSearch[Hybrid Semantic Search: 65% Lexical + 35% 768d Cosine]
+    NativeEncoder --> HybridSearch[Hybrid Semantic Search: 40% Lexical + 60% 768d Cosine]
     
     HybridSearch --> GlobalKB[(Global Semantic Memory: 750+ Docs)]
     GlobalKB --> ConfCheck{Confident Match? score >= 0.40}
@@ -110,7 +110,7 @@ graph TD
 
 ### 2. Unified Native RAG & Hybrid Search (`src/rag/`)
 - **`NativeSLMEncoder` (`src/rag/native_encoder.py`)**: Self-contained embedding retriever running on the same weights and 8,192 vocabulary as the language model.
-- **`hybrid_search` (`src/rag/search.py`)**: Vectorized cosine similarity computation combined with robust lexical matching ($S = 0.65 S_{\text{lex}} + 0.35 S_{\text{sem}}$).
+- **`hybrid_search` (`src/rag/search.py`)**: Vectorized cosine similarity computation combined with robust lexical matching ($S = 0.40 S_{\text{lex}} + 0.60 S_{\text{sem}}$ with pure semantic fallback at $0.70 S_{\text{sem}}$).
 - **Turn-by-Turn Sliding Context**: Dynamically slides backwards through dialogue history preserving most recent turns within token budget.
 - **Hot-Reload Support**: `rag.reload_model()` updates ONNX sessions in memory without downtime.
 
@@ -220,14 +220,79 @@ Open **`http://localhost:8000`** in your browser:
 - **Live Learning Monitor**: Watch real-time loss and perplexity curves, monitor token speed, and launch on-the-go fine-tuning.
 - **Knowledge Upload**: Drag-and-drop `.json`, `.csv`, `.txt`, or `.md` files to ingest on-the-fly.
 
-### 4. Run the Interactive CLI
+### 4. Dynamic Architecture Profile Registry (`config/profiles.yaml`)
+
+`config/profiles.yaml` is an open registry—not a hardcoded set of four profiles. `micro`, `small`, `medium`, and `large` ship as starter templates only. Any valid architecture can be defined in **$\le 3$ lines of YAML** or a **single CLI command**:
+
+#### Option A: Add a Profile in $\le 3$ Lines of YAML (`config/profiles.yaml`)
+```yaml
+  mymodel:
+    n_layers: 5
+    d_model: 320
+    n_heads: 5
+```
+*(Optional keys `n_kv_heads`, `d_ff`, `max_seq_len`, `vocab_size`, `checkpoint_dir`, and `artifact_path` are auto-derived if omitted.)*
+
+#### Option B: Register a Profile via CLI (`--define-profile`)
+```bash
+python3 main.py --define-profile test6L --n-layers 6 --d-model 384 \
+  --n-heads 6 --n-kv-heads 2 --d-ff 768 --max-seq-len 512 --vocab-size 4096
+```
+Auto-assigns `checkpoints/test6L/` and `artifacts/test6L_int8.onnx` and persists the definition into `config/profiles.yaml`.
+
+#### Profile Validation Rules (Checked on Load & Registration)
+| Constraint | Rule | Behavior on Violation |
+| :--- | :--- | :--- |
+| **Head Divisibility** | `d_model % n_heads == 0` | Raises `ValueError: d_model (...) must be divisible by n_heads (...)` |
+| **GQA KV Divisibility** | `n_heads % n_kv_heads == 0` | Raises `ValueError: n_heads (...) must be divisible by n_kv_heads (...)` |
+| **RoPE Parity** | `(d_model // n_heads) % 2 == 0` | Raises `ValueError` |
+| **FFN Ratio** | `d_ff in [1.5 * d_model, 4 * d_model]` | Emits `UserWarning` (non-blocking) |
+| **Vocabulary Range** | `vocab_size in [1024, 65536]` | Raises `ValueError` |
+| **Context Window** | `max_seq_len in [64, 4096]` | Raises `ValueError` |
+| **Parameter Budget** | `estimated_params in [0.5M, 500M]` | Raises `ValueError` |
+
+#### Inspect Auto-Derived Roofline Targets (`--doctor`)
+Estimates parameter count, INT8 ONNX size (`params × 1B × 1.15`), RAM budget (`×3` safety), and expected `tok/s` ranges without needing a trained checkpoint on disk:
+```bash
+python3 main.py --doctor --profile test6L
+```
+
+#### Train & Run Any Profile
+```bash
+# Train specific profile(s) or all flagged profiles
+python3 train/all_profiles.py --profiles test6L
+python3 train/all_profiles.py --all-flagged
+
+# Run interactive CLI or single prompt with runtime overrides (no retraining needed)
+python3 main.py --profile test6L
+python3 main.py --profile test6L --temperature 0.4 --min-p 0.08 --max-tokens 100
+```
+
+### 5. Live Database Knowledge Connector (`src/rag/db_connector.py`)
+
+Connect live SQLite, PostgreSQL, MySQL, or MongoDB databases directly to `RAGSystem` so runtime queries search live tables/collections alongside the vector/BM25 semantic index:
+
+```bash
+# Connect a local SQLite database at startup
+python3 main.py --profile small --db path/to/company.db
+
+# Connect PostgreSQL, MySQL, or MongoDB via connection URI
+python3 main.py --profile small --db postgresql://user:pass@localhost:5432/mydb
+python3 main.py --profile small --db mongodb://localhost:27017/knowledge_db
+```
+Or connect/inspect dynamically inside the interactive shell with `/db connect <uri>` and `/db list`.
+
+### 6. Run the Interactive CLI
 
 Launch the conversational terminal shell:
 ```bash
-python3 main.py
+python3 main.py --profile small
 ```
 
 #### Available CLI Commands:
+* `/think [query]` — Execute rStar multi-candidate reasoning with mutual verification (Best-of-N).
+* `/reason [query]` — Alias for `/think`.
+* `/reasoning [on|off]` — Toggle persistent reasoning mode for all subsequent queries.
 * `/clear` — Clear current conversation context memory.
 * `/research [topic]` — Scrape the web fallback chain (Wolfram/DDG/Wiki/ArXiv) and ingest knowledge on-the-fly.
 * `/add [text]` — Ingest custom text directly into global semantic memory.
@@ -277,9 +342,31 @@ Produces `mobile_assets/` containing:
 
 ## ⚡ Speed & Latency Benchmarks
 
-To benchmark inference token throughput and latency:
+Kruuboo-SLM-0.2 includes a comprehensive profiling suite in [test_speed.py](file:///Users/sithija/Desktop/tiny_llm_rag_project/test_speed.py) measuring Time To First Token (TTFT), token generation throughput (tok/s) with full **Key-Value (KV) Caching**, native 768d embedding vs. search matching latency, process RAM / VRAM footprint, and an automated comparison between INT8 quantized vs. FP16/FP32 ONNX graphs:
+
+| Performance & Latency Metric | INT8 Quantized (13.8M) | FP32 ONNX (13.8M) | Improvement vs. Original Baseline |
+| :--- | :--- | :--- | :--- |
+| **ONNX Graph Node Count** | **271 nodes** | **271 nodes** | **9.5x fewer nodes** (down from 2,568) |
+| **Model Disk Footprint** | **17.3 MB** | 65.7 MB | **6.2x smaller** (down from 107.5 MB) |
+| **Peak Memory (RAM RSS)** | **145.4 MB** | 404.6 MB | **6.7x less RAM** (down from 972 MB) |
+| **Hardware VRAM / MPS** | **0 MB (Pure ONNX)** | **0 MB (Pure ONNX)** | Zero PyTorch runtime overhead |
+| **Time To First Token (TTFT)** | **1.2 ms** | 2.0 ms | **13.8x faster** (down from 16.6 ms) |
+| **Token Generation Speed (4D KV Cache)**| **2,627.2 tok/s** | 834.5 tok/s | **336.8x faster** (up from 7.8 tok/s) |
+| **Raw Generation Latency** | **7.6 ms** | 24.0 ms | **16.9x faster** (down from 128.8 ms) |
+| **Native 384d Embedding Latency** | **0.6 ms** | 1.6 ms | **60.7x faster** (down from 36.4 ms) |
+| **Hybrid Search Matching (780 docs)** | **0.4 ms** | 0.4 ms | Vectorized BLAS / FAISS |
+| **Total RAG Retrieval Latency** | **3.3 ms** | 4.4 ms | **3.7x faster** (down from 12.3 ms) |
+| **End-to-End `rag.ask` Latency** | **28.0 ms** | 66.5 ms | **46.1x faster** (down from 1,290 ms) |
+
 ```bash
+# Run comparative benchmark (INT8 Quantized vs. Standard FP16/FP32)
 python3 test_speed.py
+
+# Profile specific model with custom token budget and runs
+python3 test_speed.py --model models/tiny_llm_quantized.onnx --tokens 40 --runs 5
+
+# Custom benchmark query
+python3 test_speed.py --query "What is contract consideration?"
 ```
 
 ---

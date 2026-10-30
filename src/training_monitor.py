@@ -55,6 +55,14 @@ class TrainingMonitor:
         self.probes: List[Dict] = []
         self.logs: List[str] = []
 
+        # In-memory active training model & cached probe references (eliminates 420 MB disk reloads)
+        self._active_model: Optional[TinyLLM] = None
+        self._active_tokenizer: Optional[TinyTokenizer] = None
+        self._active_device: Optional[str] = None
+        self._cached_probe_model: Optional[TinyLLM] = None
+        self._cached_probe_tokenizer: Optional[TinyTokenizer] = None
+        self._cached_probe_device: Optional[str] = None
+
         # Threading controls
         self._training_thread: Optional[threading.Thread] = None
         self._stop_requested = threading.Event()
@@ -63,6 +71,20 @@ class TrainingMonitor:
 
         # Load persisted metrics if available
         self._load_state()
+
+    def set_active_model(self, model: TinyLLM, tokenizer: TinyTokenizer, device: Optional[str] = None):
+        """Registers the live in-memory training model so probe requests from API or hooks bypass disk I/O."""
+        with self.lock:
+            self._active_model = model
+            self._active_tokenizer = tokenizer
+            self._active_device = device
+
+    def clear_active_model(self):
+        """Clears the active in-memory training model reference upon training completion."""
+        with self.lock:
+            self._active_model = None
+            self._active_tokenizer = None
+            self._active_device = None
 
     def _load_state(self):
         if METRICS_FILE.exists():
@@ -285,48 +307,92 @@ class TrainingMonitor:
         self.log_message("🛑 Training stop requested by user.")
         return True, "Stop signal sent"
 
-    def probe_model(self, prompt: str, max_tokens: int = 60) -> str:
-        """Runs live autoregressive generation on the current PyTorch checkpoint or in-memory model."""
+    def probe_model(
+        self,
+        prompt: str,
+        max_tokens: int = 60,
+        model: Optional[TinyLLM] = None,
+        tokenizer: Optional[TinyTokenizer] = None,
+        device: Optional[str] = None,
+    ) -> str:
+        """
+        Runs live autoregressive generation on the provided model argument, the active in-memory
+        training model, or a cached checkpoint instance, eliminating 420 MB disk reloads and I/O latency.
+        """
         try:
-            device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
-            with open("config.yaml", "r") as f:
-                cfg = yaml.safe_load(f)
-            m_cfg = cfg.get("model", {})
-            
-            tokenizer = TinyTokenizer.load("tokenizer.json")
-            model = TinyLLM(
-                vocab_size=m_cfg.get("vocab_size", 8192),
-                d_model=m_cfg.get("d_model", 768),
-                n_heads=m_cfg.get("n_heads", 12),
-                n_layers=m_cfg.get("n_layers", 14),
-                d_ff=m_cfg.get("d_ff", 3072),
-                max_seq_len=m_cfg.get("max_seq_len", 1024),
-                dropout=0.0
-            )
-            
-            ckpt = Path("models/tiny_llm.pt")
-            if ckpt.exists():
-                model.load_state_dict(torch.load(ckpt, map_location="cpu"), strict=False)
-            model.to(device)
-            model.eval()
+            # 1. Resolve model & tokenizer (direct argument > active training model > cached model)
+            target_model = model or self._active_model
+            target_tokenizer = tokenizer or self._active_tokenizer
+            target_device = device or self._active_device
 
-            # Autoregressive generation
-            tokens = tokenizer.encode(prompt)
-            x = torch.tensor([tokens], dtype=torch.long, device=device)
+            if target_model is None:
+                # Use in-memory cached probe model if already loaded to avoid repetitive 420 MB disk I/O
+                if self._cached_probe_model is None:
+                    target_device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+                    with open("config.yaml", "r") as f:
+                        cfg = yaml.safe_load(f)
+                    m_cfg = cfg.get("model", {})
+                    
+                    target_tokenizer = TinyTokenizer.load("tokenizer.json")
+                    target_model = TinyLLM(
+                        vocab_size=m_cfg.get("vocab_size", 8192),
+                        d_model=m_cfg.get("d_model", 768),
+                        n_heads=m_cfg.get("n_heads", 12),
+                        n_layers=m_cfg.get("n_layers", 14),
+                        d_ff=m_cfg.get("d_ff", 3072),
+                        max_seq_len=m_cfg.get("max_seq_len", 1024),
+                        dropout=0.0
+                    )
+                    
+                    ckpt = Path("models/tiny_llm.pt")
+                    if ckpt.exists():
+                        target_model.load_state_dict(torch.load(ckpt, map_location="cpu"), strict=False)
+                    target_model.to(target_device)
+                    target_model.eval()
+
+                    self._cached_probe_model = target_model
+                    self._cached_probe_tokenizer = target_tokenizer
+                    self._cached_probe_device = target_device
+                else:
+                    target_model = self._cached_probe_model
+                    target_tokenizer = self._cached_probe_tokenizer
+                    target_device = self._cached_probe_device
+            else:
+                if target_tokenizer is None:
+                    target_tokenizer = self._cached_probe_tokenizer or TinyTokenizer.load("tokenizer.json")
+                if target_device is None:
+                    try:
+                        target_device = next(target_model.parameters()).device
+                    except Exception:
+                        target_device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+
+            # 2. Preserve training mode state (probe in eval mode without dropout noise)
+            was_training = getattr(target_model, "training", False)
+            if was_training:
+                target_model.eval()
+
+            # 3. Autoregressive generation
+            tokens = target_tokenizer.encode(prompt)
+            x = torch.tensor([tokens], dtype=torch.long, device=target_device)
+            max_seq_len = getattr(target_model, "max_seq_len", 1024)
             
             with torch.no_grad():
                 for _ in range(max_tokens):
-                    if x.shape[1] >= model.max_seq_len:
+                    if x.shape[1] >= max_seq_len:
                         break
-                    logits = model(x)[:, -1, :] / 0.7
+                    logits = target_model(x)[:, -1, :] / 0.7
                     probs = torch.softmax(logits, dim=-1)
                     next_token = torch.multinomial(probs, num_samples=1)
                     if next_token.item() in [0, 1]:  # PAD or EOS
                         break
                     x = torch.cat([x, next_token], dim=1)
 
+            # 4. Restore training mode if model was actively training
+            if was_training:
+                target_model.train()
+
             generated_ids = x[0, len(tokens):].tolist()
-            output = tokenizer.decode(generated_ids).strip()
+            output = target_tokenizer.decode(generated_ids).strip()
             self.record_probe(prompt, output, self.current_step)
             return output
         except Exception as e:
